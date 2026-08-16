@@ -84,6 +84,14 @@ app.get("/", (_req, res) => {
             endpoint: "/mcp",
             admin: "/admin/login",
             auth: "oauth2-authorization-code",
+            client_id_prefix: (process.env.TRIPLESEAT_CLIENT_ID || "NONE").slice(0, 8),
+            env_present: {
+                TRIPLESEAT_CLIENT_ID: !!process.env.TRIPLESEAT_CLIENT_ID,
+                TRIPLESEAT_CLIENT_SECRET: !!process.env.TRIPLESEAT_CLIENT_SECRET,
+                DATABASE_URL: !!process.env.DATABASE_URL,
+                ADMIN_EMAIL: !!process.env.ADMIN_EMAIL,
+                ADMIN_PASSWORD: !!process.env.ADMIN_PASSWORD,
+            },
             setup: status === "needs_oauth_setup" ? "/auth/login" : undefined,
         });
     }
