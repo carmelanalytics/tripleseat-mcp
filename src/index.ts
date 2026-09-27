@@ -1137,7 +1137,7 @@ async function executeTool(name: string, args: any): Promise<string> {
       const { data } = await tripleseatPut(`/accounts/${account_id}`, { account: accountFields });
       return JSON.stringify(data, null, 2);
     }
-    case "create_lead_task": {
+        case "create_lead_task": {
       const { lead_id: taskLeadId, ...taskFields } = args;
       const { data } = await tripleseatPost(`/leads/${taskLeadId}/tasks`, taskFields);
       return JSON.stringify(data, null, 2);
