@@ -1089,17 +1089,17 @@ async function executeTool(name, args) {
         }
         case "create_lead_task": {
             const { lead_id: taskLeadId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/leads/${taskLeadId}/tasks`, taskFields);
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/leads/${taskLeadId}/tasks`, { task: taskFields });
             return JSON.stringify(data, null, 2);
         }
         case "create_booking_task": {
             const { booking_id: taskBookingId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/bookings/${taskBookingId}/tasks`, taskFields);
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/bookings/${taskBookingId}/tasks`, { task: taskFields });
             return JSON.stringify(data, null, 2);
         }
         case "create_contact_task": {
             const { contact_id: taskContactId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/contacts/${taskContactId}/tasks`, taskFields);
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/contacts/${taskContactId}/tasks`, { task: taskFields });
             return JSON.stringify(data, null, 2);
         }
         default:
