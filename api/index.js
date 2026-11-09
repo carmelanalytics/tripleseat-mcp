@@ -16,6 +16,7 @@ const auth_js_1 = require("./auth.js");
 const tripleseat_js_1 = require("./tripleseat.js");
 const middleware_js_1 = require("./middleware.js");
 const routes_js_1 = require("./admin/routes.js");
+const routes_js_2 = require("./agent/routes.js");
 const usage_js_1 = require("./usage.js");
 const db_js_1 = require("./db.js");
 const roles_js_1 = require("./roles.js");
@@ -84,7 +85,6 @@ app.get("/", (_req, res) => {
             endpoint: "/mcp",
             admin: "/admin/login",
             auth: "oauth2-authorization-code",
-            client_id_prefix: (process.env.TRIPLESEAT_CLIENT_ID || "NONE").slice(0, 8),
             env_present: {
                 TRIPLESEAT_CLIENT_ID: !!process.env.TRIPLESEAT_CLIENT_ID,
                 TRIPLESEAT_CLIENT_SECRET: !!process.env.TRIPLESEAT_CLIENT_SECRET,
@@ -237,6 +237,8 @@ app.post("/oauth/token", async (req, res) => {
     }
 });
 // ── Admin Dashboard ──
+app.use("/agent/cron", routes_js_2.agentCronRouter);
+app.use("/admin/agent", routes_js_2.agentAdminRouter);
 app.use("/admin", routes_js_1.adminRouter);
 // ── Account: Change Password ──
 function changePasswordPage(opts = {}) {
@@ -1089,17 +1091,17 @@ async function executeTool(name, args) {
         }
         case "create_lead_task": {
             const { lead_id: taskLeadId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/leads/${taskLeadId}/tasks`, { task: taskFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/leads/${taskLeadId}/tasks`, taskFields);
             return JSON.stringify(data, null, 2);
         }
         case "create_booking_task": {
             const { booking_id: taskBookingId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/bookings/${taskBookingId}/tasks`, { task: taskFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/bookings/${taskBookingId}/tasks`, taskFields);
             return JSON.stringify(data, null, 2);
         }
         case "create_contact_task": {
             const { contact_id: taskContactId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/contacts/${taskContactId}/tasks`, { task: taskFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/contacts/${taskContactId}/tasks`, taskFields);
             return JSON.stringify(data, null, 2);
         }
         default:
@@ -1114,8 +1116,8 @@ const SERVER_INFO = {
 const SERVER_INSTRUCTIONS = `You are connected to TripleSeat, a CRM and event management platform for wedding and event venues. This server provides live read AND write access to event data, leads, bookings, contacts, accounts, and venue locations.
 
 Key context for this installation:
-- Two venues: Knotting Hill Place and Brighton Abbey (both in the DFW area, ~10 minutes apart)
-- The team handles ~700 inbound leads per month, booking 40-50 weddings
+- One venue: The Village Big Sur (46840 Highway 1, Big Sur, CA): events and weddings, Solstice restaurant, Big Sur Bodega, Word of Mouth Yoga; Idlewild is the off-site river ceremony location
+- Owner: BS Rest, LLC. Tripleseat site: thevillagebigsur.tripleseat.com
 - Events always have at least: a booking, account, contact, location, and room
 - Financial data is available on events and bookings when requested
 - Use location IDs to filter results by venue when the user asks about a specific property

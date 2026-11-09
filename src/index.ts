@@ -18,6 +18,7 @@ import {
 import { tripleseatGet, tripleseatPost, tripleseatPut } from "./tripleseat.js";
 import { oauthTokenAuth } from "./middleware.js";
 import { adminRouter } from "./admin/routes.js";
+import { agentCronRouter, agentAdminRouter } from "./agent/routes.js";
 import { logToolCall } from "./usage.js";
 import { migrate } from "./db.js";
 import { seedDefaultRoles } from "./roles.js";
@@ -287,6 +288,8 @@ app.post("/oauth/token", async (req, res) => {
 });
 
 // ── Admin Dashboard ──
+app.use("/agent/cron", agentCronRouter);
+app.use("/admin/agent", agentAdminRouter);
 app.use("/admin", adminRouter);
 
 // ── Account: Change Password ──
@@ -1167,8 +1170,8 @@ const SERVER_INFO = {
 const SERVER_INSTRUCTIONS = `You are connected to TripleSeat, a CRM and event management platform for wedding and event venues. This server provides live read AND write access to event data, leads, bookings, contacts, accounts, and venue locations.
 
 Key context for this installation:
-- Two venues: Knotting Hill Place and Brighton Abbey (both in the DFW area, ~10 minutes apart)
-- The team handles ~700 inbound leads per month, booking 40-50 weddings
+- One venue: The Village Big Sur (46840 Highway 1, Big Sur, CA): events and weddings, Solstice restaurant, Big Sur Bodega, Word of Mouth Yoga; Idlewild is the off-site river ceremony location
+- Owner: BS Rest, LLC. Tripleseat site: thevillagebigsur.tripleseat.com
 - Events always have at least: a booking, account, contact, location, and room
 - Financial data is available on events and bookings when requested
 - Use location IDs to filter results by venue when the user asks about a specific property

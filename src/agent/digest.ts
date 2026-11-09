@@ -1,0 +1,54 @@
+/**
+ * Daily digest: everything the agent saw and did in the last 24 hours, plus the questions it
+ * could not answer (those are the next rows to fill in on the FAQ sheet).
+ */
+
+import { agentConfig } from "./config.js";
+import { sendInternal } from "./graph.js";
+import { query } from "../db.js";
+import type { AgentMessageRow } from "./store.js";
+
+function esc(s: string | null | undefined): string {
+  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export async function sendDigest(): Promise<{ count: number }> {
+  const rows = await query<AgentMessageRow>(
+    `SELECT * FROM agent_messages WHERE created_at > NOW() - INTERVAL '24 hours' AND action <> 'duplicate' ORDER BY created_at`
+  );
+  const by = (a: string) => rows.filter((r) => r.action === a);
+  const sent = by("sent"), drafted = by("drafted"), escalated = by("escalated"), errored = by("error"), ignored = by("ignored");
+  const base = process.env.PUBLIC_BASE_URL || "";
+  const openQs = rows.flatMap((r) => (r.open_questions || []).map((q) => ({ q, r })));
+
+  const card = (r: AgentMessageRow) => `
+<div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin:10px 0">
+  <div><b>${esc(r.guest_name || r.from_address)}</b> &middot; ${esc(r.source)} &middot; ${esc(r.department)} &middot; ${esc((r.topics || []).join(", "))}</div>
+  <div style="color:#666">${esc(r.subject)}</div>
+  <pre style="white-space:pre-wrap;font-family:inherit;background:#f6f6f6;padding:8px">${esc((r.inbound_text || "").slice(0, 1200))}</pre>
+  ${r.reply_text ? `<pre style="white-space:pre-wrap;font-family:inherit;background:#eef5ee;padding:8px">${esc(r.reply_text)}</pre>` : ""}
+  ${r.review_notes ? `<div style="color:#8a5a00">Notes: ${esc(r.review_notes)}</div>` : ""}
+  <a href="${base}/admin/agent/message/${r.id}">Open / correct</a>
+</div>`;
+
+  const html = `
+<div style="font-family:Arial,sans-serif;max-width:760px">
+<h2>Inquiry agent: last 24 hours</h2>
+<p>Mode: <b>${agentConfig.mode}</b> &middot; Sent ${sent.length} &middot; Drafted (not sent) ${drafted.length} &middot; Handed to a person ${escalated.length} &middot; Errors ${errored.length} &middot; Not inquiries ${ignored.length}</p>
+${openQs.length ? `<h3>Questions the agent could not answer (add these to the FAQ sheet)</h3><ul>${openQs.map((o) => `<li>${esc(o.q)} <span style="color:#666">(${esc(o.r.guest_name || o.r.from_address)})</span></li>`).join("")}</ul>` : ""}
+${escalated.length ? `<h3>Handed to a person</h3>${escalated.map(card).join("")}` : ""}
+${sent.length ? `<h3>Sent</h3>${sent.map(card).join("")}` : ""}
+${drafted.length ? `<h3>Drafted, not sent</h3>${drafted.map(card).join("")}` : ""}
+${errored.length ? `<h3>Errors</h3>${errored.map(card).join("")}` : ""}
+<p style="color:#666">Full log: <a href="${base}/admin/agent">${base}/admin/agent</a></p>
+</div>`;
+
+  await sendInternal(
+    agentConfig.sendAs,
+    agentConfig.digestTo,
+    `Inquiry agent digest: ${sent.length} sent, ${escalated.length} for a person`,
+    html,
+    agentConfig.digestCc
+  );
+  return { count: rows.length };
+}

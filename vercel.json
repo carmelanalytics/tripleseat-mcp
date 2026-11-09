@@ -8,6 +8,23 @@
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "/api/index.js" }
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/agent/cron/poll",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/agent/cron/kb-sync",
+      "schedule": "7 * * * *"
+    },
+    {
+      "path": "/agent/cron/digest",
+      "schedule": "0 15 * * *"
+    }
   ]
 }

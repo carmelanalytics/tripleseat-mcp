@@ -88,3 +88,24 @@ Webhooks: New lead alerts, 48-hour response monitor, BEO completeness checker
 ---
 
 **Questions?** matt@stormbreakerdigital.com
+
+## Inquiry agent (The Village)
+
+`src/agent/` answers guest inquiries that arrive by email (Tripleseat discussion notifications,
+The Knot / WeddingWire, Zola, and direct mail to events@ / info@ / patrick@) in The Village voice.
+
+Flow (every 5 minutes, `/agent/cron/poll`): new mail is queued, sorted by source, triaged by Claude
+(inquiry or not, department, topics, dates, escalation), checked against Tripleseat (existing lead or
+event, date availability), answered from the approved FAQ answers and house rules, checked twice
+(code rules plus a separate review model), then sent on the original thread with events@ copied.
+Anything about money, contract changes, booked-date changes, fire or road closures, complaints,
+press or custom pricing goes to a person instead.
+
+Visibility: every sent reply is copied to Patrick with a "Correct this reply" link; `/admin/agent`
+shows the full log; corrections become rules the agent follows from then on; a daily digest lists
+everything plus the questions the FAQ couldn't answer.
+
+Business facts are not stored in this repository: FAQ answers sync hourly from the FAQ Google Sheet
+(`/agent/cron/kb-sync`) and house rules are edited at `/admin/agent/settings`.
+
+Set the Vercel project's Function Max Duration to 300 seconds. Start in `AGENT_MODE=shadow`.
