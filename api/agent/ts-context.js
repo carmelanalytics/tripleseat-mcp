@@ -4,6 +4,8 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.findGuest = findGuest;
+exports.idsFromTripleseatEmail = idsFromTripleseatEmail;
+exports.guestFromIds = guestFromIds;
 exports.availability = availability;
 exports.createLead = createLead;
 exports.logToTripleseat = logToTripleseat;
@@ -50,6 +52,31 @@ async function findGuest(email) {
         return { stage: "new", summary: `Tripleseat lookup failed: ${err.message.slice(0, 120)}` };
     }
     return { stage: "new", summary: "Not yet in Tripleseat." };
+}
+/** Tripleseat notification emails link to the record; pull the lead or event id out of the body. */
+function idsFromTripleseatEmail(body) {
+    const lead = body.match(/tripleseat\.com\/leads\/(\d+)/i);
+    const ev = body.match(/tripleseat\.com\/(?:events|bookings)\/(\d+)/i);
+    return { leadId: lead?.[1], eventId: ev?.[1] };
+}
+async function guestFromIds(ids) {
+    try {
+        if (ids.eventId) {
+            const { data } = await (0, tripleseat_js_1.tripleseatGet)(`/events/${ids.eventId}`);
+            const e = data?.event || data;
+            const booked = /definite|closed/i.test(String(e?.status || ""));
+            return { stage: booked ? "booked" : "lead", eventId: ids.eventId, summary: `Event: ${e?.name} on ${e?.event_start} (status ${e?.status}).` };
+        }
+        if (ids.leadId) {
+            const { data } = await (0, tripleseat_js_1.tripleseatGet)(`/leads/${ids.leadId}`);
+            const l = data?.lead || data;
+            return { stage: "lead", leadId: ids.leadId, summary: `Lead #${ids.leadId}: ${l?.first_name || ""} ${l?.last_name || ""}, event date ${l?.event_date || "not set"}, guests ${l?.guest_count || "not set"}.` };
+        }
+    }
+    catch {
+        /* fall through */
+    }
+    return null;
 }
 /** Availability facts for each requested date (YYYY-MM-DD). */
 async function availability(dates) {

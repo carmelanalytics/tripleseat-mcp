@@ -14,6 +14,7 @@ function esc(s) {
 async function sendDigest() {
     const rows = await (0, db_js_1.query)(`SELECT * FROM agent_messages WHERE created_at > NOW() - INTERVAL '24 hours' AND action <> 'duplicate' ORDER BY created_at`);
     const by = (a) => rows.filter((r) => r.action === a);
+    const waiting = by("awaiting_ts");
     const sent = by("sent"), drafted = by("drafted"), escalated = by("escalated"), errored = by("error"), ignored = by("ignored");
     const base = process.env.PUBLIC_BASE_URL || "";
     const openQs = rows.flatMap((r) => (r.open_questions || []).map((q) => ({ q, r })));
@@ -29,7 +30,7 @@ async function sendDigest() {
     const html = `
 <div style="font-family:Arial,sans-serif;max-width:760px">
 <h2>Inquiry agent: last 24 hours</h2>
-<p>Mode: <b>${config_js_1.agentConfig.mode}</b> &middot; Sent ${sent.length} &middot; Drafted (not sent) ${drafted.length} &middot; Handed to a person ${escalated.length} &middot; Errors ${errored.length} &middot; Not inquiries ${ignored.length}</p>
+<p>Mode: <b>${config_js_1.agentConfig.mode}</b> &middot; Sent ${sent.length} &middot; Drafted (not sent) ${drafted.length} &middot; Handed to a person ${escalated.length} &middot; Errors ${errored.length} &middot; Waiting for a Tripleseat thread ${waiting.length} &middot; Not inquiries ${ignored.length}</p>
 ${openQs.length ? `<h3>Questions the agent could not answer (add these to the FAQ sheet)</h3><ul>${openQs.map((o) => `<li>${esc(o.q)} <span style="color:#666">(${esc(o.r.guest_name || o.r.from_address)})</span></li>`).join("")}</ul>` : ""}
 ${escalated.length ? `<h3>Handed to a person</h3>${escalated.map(card).join("")}` : ""}
 ${sent.length ? `<h3>Sent</h3>${sent.map(card).join("")}` : ""}

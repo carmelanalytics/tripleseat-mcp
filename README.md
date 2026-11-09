@@ -97,7 +97,11 @@ The Knot / WeddingWire, Zola, and direct mail to events@ / info@ / patrick@) in 
 Flow (every 5 minutes, `/agent/cron/poll`): new mail is queued, sorted by source, triaged by Claude
 (inquiry or not, department, topics, dates, escalation), checked against Tripleseat (existing lead or
 event, date availability), answered from the approved FAQ answers and house rules, checked twice
-(code rules plus a separate review model), then sent on the original thread with events@ copied.
+(code rules plus a separate review model), then sent. Every guest email leaves from events@. Event conversations live in Tripleseat: an event
+inquiry that arrives by The Knot, WeddingWire, Zola or direct email becomes a Tripleseat lead and is
+answered on the lead's Tripleseat discussion thread (by replying, from events@, to the Tripleseat
+discussion email, which carries the thread token). Non-event questions (Solstice, Bodega, yoga) are
+answered by email from events@.
 Anything about money, contract changes, booked-date changes, fire or road closures, complaints,
 press or custom pricing goes to a person instead.
 

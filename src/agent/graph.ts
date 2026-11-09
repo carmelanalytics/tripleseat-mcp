@@ -123,6 +123,33 @@ export async function replyToMessage(
   });
 }
 
+/**
+ * Send a guest-facing email from events@ when the inbound copy sits in another mailbox.
+ * The original message is quoted underneath so a Tripleseat thread token travels with it.
+ */
+export async function sendAsEvents(
+  to: string,
+  subject: string,
+  text: string,
+  quotedFrom: string,
+  quotedBody: string,
+  cc: string[] = []
+): Promise<void> {
+  const body = `${text}\n\n----- Original message -----\nFrom: ${quotedFrom}\nSubject: ${subject}\n\n${quotedBody}`;
+  await graph(`/users/${encodeURIComponent(agentConfig.sendAs)}/sendMail`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: {
+        subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+        body: { contentType: "Text", content: body },
+        toRecipients: [{ emailAddress: { address: to } }],
+        ccRecipients: cc.filter((c) => c.toLowerCase() !== to.toLowerCase()).map((address) => ({ emailAddress: { address } })),
+      },
+      saveToSentItems: true,
+    }),
+  });
+}
+
 /** Plain send (used for the digest and internal escalations only — never to guests). */
 export async function sendInternal(
   fromMailbox: string,

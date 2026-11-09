@@ -53,6 +53,32 @@ export async function findGuest(email: string): Promise<GuestRecord> {
   return { stage: "new", summary: "Not yet in Tripleseat." };
 }
 
+/** Tripleseat notification emails link to the record; pull the lead or event id out of the body. */
+export function idsFromTripleseatEmail(body: string): { leadId?: string; eventId?: string } {
+  const lead = body.match(/tripleseat\.com\/leads\/(\d+)/i);
+  const ev = body.match(/tripleseat\.com\/(?:events|bookings)\/(\d+)/i);
+  return { leadId: lead?.[1], eventId: ev?.[1] };
+}
+
+export async function guestFromIds(ids: { leadId?: string; eventId?: string }): Promise<GuestRecord | null> {
+  try {
+    if (ids.eventId) {
+      const { data } = await tripleseatGet(`/events/${ids.eventId}`);
+      const e: any = (data as any)?.event || data;
+      const booked = /definite|closed/i.test(String(e?.status || ""));
+      return { stage: booked ? "booked" : "lead", eventId: ids.eventId, summary: `Event: ${e?.name} on ${e?.event_start} (status ${e?.status}).` };
+    }
+    if (ids.leadId) {
+      const { data } = await tripleseatGet(`/leads/${ids.leadId}`);
+      const l: any = (data as any)?.lead || data;
+      return { stage: "lead", leadId: ids.leadId, summary: `Lead #${ids.leadId}: ${l?.first_name || ""} ${l?.last_name || ""}, event date ${l?.event_date || "not set"}, guests ${l?.guest_count || "not set"}.` };
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
 /** Availability facts for each requested date (YYYY-MM-DD). */
 export async function availability(dates: string[]): Promise<string> {
   const lines: string[] = [];

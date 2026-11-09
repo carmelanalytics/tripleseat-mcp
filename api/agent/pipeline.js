@@ -173,14 +173,35 @@ async function handle(rowId, mailbox, m, sendsLeft) {
         return;
     }
     try {
+        const fromTs = intake.source === "tripleseat_guest_message" || intake.source === "tripleseat_new_lead";
         const lookupKey = intake.source === "direct" ? intake.fromAddress : "";
-        let guest = await (0, ts_context_js_1.findGuest)(lookupKey);
+        // Who is this? Tripleseat notifications link to the lead/event; otherwise look up by email.
+        let guest = (fromTs && (await (0, ts_context_js_1.guestFromIds)((0, ts_context_js_1.idsFromTripleseatEmail)(m.body?.content || "")))) || (await (0, ts_context_js_1.findGuest)(lookupKey));
+        // An inquiry that came in by Knot/Zola/direct email and is waiting for its Tripleseat thread
+        // gets answered here, inside Tripleseat, together with whatever the latest message says.
+        let waiting = [];
+        if (fromTs) {
+            const tsName = nameFromTripleseatSubject(intake.subject);
+            waiting = await (0, db_js_1.query)(`SELECT id, inbound_text, source FROM agent_messages
+         WHERE action = 'awaiting_ts' AND created_at > NOW() - INTERVAL '5 days'
+           AND ((tripleseat_lead_id IS NOT NULL AND tripleseat_lead_id = $1)
+             OR (tripleseat_event_id IS NOT NULL AND tripleseat_event_id = $2)
+             OR ($3 <> '' AND LOWER(guest_name) = LOWER($3)))
+         ORDER BY id`, [guest.leadId || "", guest.eventId || "", tsName]);
+            if (waiting.length) {
+                intake.text =
+                    waiting.map((w) => `EARLIER INQUIRY (arrived via ${w.source}, not yet answered):\n${w.inbound_text}`).join("\n\n") +
+                        `\n\nLATEST MESSAGE ON THE TRIPLESEAT THREAD:\n${intake.text}`;
+            }
+        }
         const t = await triage(intake, guest);
         if (!guest.leadId && !guest.eventId && t.guest_email && t.guest_email !== lookupKey)
             guest = await (0, ts_context_js_1.findGuest)(t.guest_email);
-        if (!t.guest_first_name && intake.source === "tripleseat_guest_message") {
+        if (!t.guest_first_name && fromTs)
             t.guest_first_name = nameFromTripleseatSubject(intake.subject).split(" ")[0] || "";
-        }
+        if (waiting.length)
+            t.is_inquiry = true;
+        const isEvent = t.department.startsWith("Events");
         await (0, db_js_1.query)(`UPDATE agent_messages SET guest_name=$2, guest_email=$3, department=$4, topics=$5, tripleseat_lead_id=$6, tripleseat_event_id=$7 WHERE id=$1`, [rowId, `${t.guest_first_name} ${t.guest_last_name}`.trim(), t.guest_email || lookupKey, t.department, t.topics, guest.leadId || null, guest.eventId || null]);
         if (!t.is_inquiry) {
             await (0, db_js_1.query)(`UPDATE agent_messages SET action='ignored', review_notes=$2 WHERE id=$1`, [rowId, t.not_inquiry_reason]);
@@ -188,6 +209,27 @@ async function handle(rowId, mailbox, m, sendsLeft) {
         }
         if (t.escalate)
             return escalate(rowId, intake, t.escalate_reason);
+        // ── Event inquiries that arrived outside Tripleseat: move them into Tripleseat, reply there later ──
+        if (isEvent && !fromTs) {
+            const email = t.guest_email || lookupKey;
+            const knotNative = process.env.AGENT_KNOT_NATIVE === "true" && intake.source === "weddingpro";
+            if (!guest.leadId && !guest.eventId && email && !knotNative && config_js_1.agentConfig.mode === "live") {
+                guest.leadId = await (0, ts_context_js_1.createLead)({
+                    firstName: t.guest_first_name,
+                    lastName: t.guest_last_name,
+                    email,
+                    phone: t.guest_phone,
+                    eventDate: t.requested_dates[0],
+                    guestCount: t.guest_count || undefined,
+                    description: `${t.department} inquiry via ${intake.source}`,
+                    notes: `Original message (${intake.source}):\n${intake.text}`,
+                });
+            }
+            await (0, db_js_1.query)(`UPDATE agent_messages SET action='awaiting_ts', tripleseat_lead_id=COALESCE($2, tripleseat_lead_id), send_transport='tripleseat_relay',
+           review_notes=$3 WHERE id=$1`, [rowId, guest.leadId || null, guest.leadId || guest.eventId ? "Waiting for the Tripleseat thread to answer in." : "Waiting for the lead to appear in Tripleseat."]);
+            await (0, graph_js_1.categorize)(mailbox, m.id, "Agent: moved to Tripleseat");
+            return;
+        }
         const prior = await priorRepliesOn(m.conversationId);
         if (prior.todayCount >= config_js_1.agentConfig.maxRepliesPerThreadPerDay) {
             return escalate(rowId, intake, `Agent already replied ${prior.todayCount} times on this thread in 24 hours (loop guard).`);
@@ -208,43 +250,52 @@ async function handle(rowId, mailbox, m, sendsLeft) {
         if (problems.length || draft.confidence === "low") {
             return escalate(rowId, intake, `Failed final check: ${problems.join("; ") || "low confidence"}`, finalText);
         }
+        const transport = fromTs ? "tripleseat_relay" : "email_from_events";
+        const closeWaiting = async (action) => {
+            if (waiting.length)
+                await (0, db_js_1.query)(`UPDATE agent_messages SET action=$2, review_notes='Answered in Tripleseat with message #' || $3 WHERE id = ANY($1)`, [waiting.map((w) => w.id), action, String(rowId)]);
+        };
         if (config_js_1.agentConfig.mode !== "live") {
-            await (0, db_js_1.query)(`UPDATE agent_messages SET action='drafted', send_transport=$2 WHERE id=$1`, [rowId, intake.transport]);
+            await (0, db_js_1.query)(`UPDATE agent_messages SET action='drafted', send_transport=$2 WHERE id=$1`, [rowId, transport]);
+            await closeWaiting("drafted_in_ts");
             await (0, graph_js_1.categorize)(mailbox, m.id, "Agent drafted");
             return;
         }
         if (sendsLeft.n <= 0)
             return escalate(rowId, intake, "Per-run send limit reached; held for the next run or a person.", finalText);
         sendsLeft.n--;
-        // New marketplace or direct inquiries become Tripleseat leads before we answer.
-        if (!guest.leadId && !guest.eventId && intake.source !== "tripleseat_guest_message" && intake.source !== "tripleseat_new_lead" && t.department.startsWith("Events")) {
-            const email = t.guest_email || lookupKey;
-            if (email) {
-                guest.leadId = await (0, ts_context_js_1.createLead)({
-                    firstName: t.guest_first_name,
-                    lastName: t.guest_last_name,
-                    email,
-                    phone: t.guest_phone,
-                    eventDate: t.requested_dates[0],
-                    guestCount: t.guest_count || undefined,
-                    description: `${t.department} inquiry via ${intake.source}`,
-                    notes: `Original message (${intake.source}):\n${intake.text}`,
-                });
-                await (0, db_js_1.query)(`UPDATE agent_messages SET tripleseat_lead_id=$2 WHERE id=$1`, [rowId, guest.leadId || null]);
-            }
-        }
+        // Every guest email leaves from events@. If this copy is already in events@, reply on it;
+        // otherwise send from events@ to the same reply address with the original quoted
+        // (that keeps the Tripleseat thread token, so Tripleseat files it on the thread).
         await (0, db_js_1.query)(`UPDATE agent_messages SET action='sending' WHERE id=$1`, [rowId]);
-        await (0, graph_js_1.replyToMessage)(mailbox, m.id, finalText, [config_js_1.agentConfig.ccOnEveryReply]);
-        await (0, db_js_1.query)(`UPDATE agent_messages SET action='sent', sent_at=NOW(), send_transport=$2 WHERE id=$1`, [rowId, intake.transport]);
+        if (mailbox.toLowerCase() === config_js_1.agentConfig.sendAs.toLowerCase()) {
+            await (0, graph_js_1.replyToMessage)(mailbox, m.id, finalText, [config_js_1.agentConfig.ccOnEveryReply]);
+        }
+        else {
+            await (0, graph_js_1.sendAsEvents)(intake.replyAddress, intake.subject, finalText, `${intake.fromName} <${intake.fromAddress}>`, m.body?.content || intake.text, [config_js_1.agentConfig.ccOnEveryReply]);
+        }
+        await (0, db_js_1.query)(`UPDATE agent_messages SET action='sent', sent_at=NOW(), send_transport=$2 WHERE id=$1`, [rowId, transport]);
+        await closeWaiting("answered_in_ts");
         await (0, graph_js_1.categorize)(mailbox, m.id, "Agent replied");
         await sendCopy(rowId, intake, finalText).catch(() => { });
-        if (intake.transport !== "tripleseat_relay") {
-            await (0, ts_context_js_1.logToTripleseat)(guest, `Inquiry agent replied by email (${intake.source}) on ${todayLA()}:\n\n${finalText}`).catch((e) => (0, db_js_1.query)(`UPDATE agent_messages SET error=$2 WHERE id=$1`, [rowId, `Tripleseat log failed: ${e.message}`]));
-        }
     }
     catch (err) {
         await (0, db_js_1.query)(`UPDATE agent_messages SET action='error', error=$2 WHERE id=$1`, [rowId, String(err.message).slice(0, 1000)]);
         await escalate(rowId, intake, `Agent error: ${String(err.message).slice(0, 200)}`).catch(() => { });
+    }
+}
+/** Event inquiries that never got a Tripleseat thread go to a person after a wait. */
+async function sweepAwaiting() {
+    const wait = Number(process.env.AGENT_TS_WAIT_MINUTES || "120");
+    const stale = await (0, db_js_1.query)(`SELECT id, source, from_address, guest_name, subject, inbound_text, tripleseat_lead_id FROM agent_messages
+     WHERE action = 'awaiting_ts' AND created_at < NOW() - ($1 || ' minutes')::interval LIMIT 10`, [String(wait)]);
+    for (const r of stale) {
+        const intake = {
+            source: r.source, transport: "none", fromAddress: r.from_address || "", fromName: r.guest_name || "",
+            replyAddress: r.from_address || "", subject: r.subject || "", text: r.inbound_text || "",
+        };
+        const where = r.tripleseat_lead_id ? `Tripleseat lead #${r.tripleseat_lead_id} exists, but no discussion thread reached events@` : "No Tripleseat lead was found or created";
+        await escalate(r.id, intake, `${where} within ${wait} minutes. Please start the thread in Tripleseat; the agent will take it from the guest's next message.`);
     }
 }
 async function runPoll() {
@@ -262,6 +313,7 @@ async function runPoll() {
     const pending = await (0, db_js_1.query)(`SELECT id, mailbox, graph_message_id FROM agent_messages
      WHERE action = 'pending' OR (action = 'working' AND created_at < NOW() - INTERVAL '15 minutes')
      ORDER BY received_at NULLS LAST, id LIMIT $1`, [perRun]);
+    await sweepAwaiting();
     const sendsLeft = { n: config_js_1.agentConfig.maxSendsPerRun };
     for (const p of pending) {
         try {
