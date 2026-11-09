@@ -14,6 +14,7 @@ const express_1 = __importDefault(require("express"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const auth_js_1 = require("./auth.js");
 const tripleseat_js_1 = require("./tripleseat.js");
+const extra_tools_js_1 = require("./extra-tools.js");
 const middleware_js_1 = require("./middleware.js");
 const routes_js_1 = require("./admin/routes.js");
 const usage_js_1 = require("./usage.js");
@@ -84,7 +85,6 @@ app.get("/", (_req, res) => {
             endpoint: "/mcp",
             admin: "/admin/login",
             auth: "oauth2-authorization-code",
-            client_id_prefix: (process.env.TRIPLESEAT_CLIENT_ID || "NONE").slice(0, 8),
             env_present: {
                 TRIPLESEAT_CLIENT_ID: !!process.env.TRIPLESEAT_CLIENT_ID,
                 TRIPLESEAT_CLIENT_SECRET: !!process.env.TRIPLESEAT_CLIENT_SECRET,
@@ -621,7 +621,8 @@ const TOOLS = [
                 guest_count: { type: "number", description: "Expected number of guests" },
                 location_id: { type: "number", description: "Location ID (required if multiple locations)" },
                 additional_information: { type: "string", description: "Additional details or notes" },
-                contact_preference: { type: "string", enum: ["Email", "Phone"], description: "Preferred contact method" }
+                contact_preference: { type: "string", enum: ["Email", "Phone"], description: "Preferred contact method" },
+                lead_source_ids: { type: "array", items: { type: "number" }, description: "Lead Source IDs (see list_lead_sources). Always set the lead's origin." }
             },
             required: ["first_name", "last_name", "email_address", "phone_number"]
         }
@@ -645,7 +646,8 @@ const TOOLS = [
                 guest_count: { type: "number" },
                 location_id: { type: "number" },
                 additional_information: { type: "string" },
-                status: { type: "string" }
+                status: { type: "string" },
+                lead_source_ids: { type: "array", items: { type: "number" }, description: "Replace the lead's Lead Source(s) with these IDs (see list_lead_sources)" }
             },
             required: ["lead_id"]
         }
@@ -837,7 +839,8 @@ const TOOLS = [
             },
             required: ["contact_id", "body", "due_date", "priority", "task_type_id", "assignee_ids", "site_id"]
         }
-    }
+    },
+    ...extra_tools_js_1.EXTRA_TOOLS
 ];
 // ── Response Size Management ──
 const MAX_RESPONSE_CHARS = 12000;
@@ -874,8 +877,17 @@ function truncateResponse(text, toolName) {
         : `\n\n[Response truncated at ${MAX_RESPONSE_CHARS} chars.]`;
     return text.substring(0, MAX_RESPONSE_CHARS) + hint;
 }
+function withLeadSources(fields) {
+    const { lead_source_ids, ...rest } = fields;
+    if (Array.isArray(lead_source_ids) && lead_source_ids.length) {
+        const ids = lead_source_ids.map(Number).filter((n) => Number.isFinite(n));
+        rest.lead_source_id = ids[0];
+        rest.selected_lead_sources_attributes = ids.map((id) => ({ lead_source_id: id }));
+    }
+    return rest;
+}
 // ── Tool Execution ──
-async function executeTool(name, args) {
+async function executeTool(name, args, roleName) {
     const params = {};
     switch (name) {
         case "get_event": {
@@ -1035,12 +1047,12 @@ async function executeTool(name, args) {
         // ── Write Tools ──
         case "create_lead": {
             const { lead_id, ...leadFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)("/leads", { lead: leadFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)("/leads", { lead: withLeadSources(leadFields) });
             return JSON.stringify(data, null, 2);
         }
         case "update_lead": {
             const { lead_id, ...leadFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPut)(`/leads/${lead_id}`, { lead: leadFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPut)(`/leads/${lead_id}`, { lead: withLeadSources(leadFields) });
             return JSON.stringify(data, null, 2);
         }
         case "create_booking": {
@@ -1089,21 +1101,25 @@ async function executeTool(name, args) {
         }
         case "create_lead_task": {
             const { lead_id: taskLeadId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/leads/${taskLeadId}/tasks`, { task: taskFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/leads/${taskLeadId}/tasks`, taskFields);
             return JSON.stringify(data, null, 2);
         }
         case "create_booking_task": {
             const { booking_id: taskBookingId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/bookings/${taskBookingId}/tasks`, { task: taskFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/bookings/${taskBookingId}/tasks`, taskFields);
             return JSON.stringify(data, null, 2);
         }
         case "create_contact_task": {
             const { contact_id: taskContactId, ...taskFields } = args;
-            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/contacts/${taskContactId}/tasks`, { task: taskFields });
+            const { data } = await (0, tripleseat_js_1.tripleseatPost)(`/contacts/${taskContactId}/tasks`, taskFields);
             return JSON.stringify(data, null, 2);
         }
-        default:
+        default: {
+            const extra = await (0, extra_tools_js_1.executeExtraTool)(name, args, roleName);
+            if (extra !== null)
+                return extra;
             throw new Error(`Unknown tool: ${name}`);
+        }
     }
 }
 // ── Server Info ──
@@ -1111,35 +1127,22 @@ const SERVER_INFO = {
     name: "tripleseat",
     version: "1.0.0",
 };
-const SERVER_INSTRUCTIONS = `You are connected to TripleSeat, a CRM and event management platform for wedding and event venues. This server provides live read AND write access to event data, leads, bookings, contacts, accounts, and venue locations.
+const SERVER_INSTRUCTIONS = `You are connected to Tripleseat for The Village, Big Sur (BS Rest, LLC) — site_id 12601, location_id 24590, 46840 Highway 1, Big Sur, CA. This server provides live read and write access to events, leads, bookings, contacts, accounts, notes, lead sources, document billing items, tasks and payment reports.
 
-Key context for this installation:
-- Two venues: Knotting Hill Place and Brighton Abbey (both in the DFW area, ~10 minutes apart)
-- The team handles ~700 inbound leads per month, booking 40-50 weddings
-- Events always have at least: a booking, account, contact, location, and room
-- Financial data is available on events and bookings when requested
-- Use location IDs to filter results by venue when the user asks about a specific property
+Lead origin (standing rule): every lead must record where it came from (The Knot, WeddingWire, Zola, website form, phone, email/referral, walk-in, etc.). Set it with set_lead_source (or lead_source_ids on create_lead/update_lead) and add an "ORIGIN: ..." note describing the path the inquiry took. Use list_lead_sources for IDs; if a needed source is missing, ask the user to add it in Tripleseat (Settings > Preferences > Drop-downs > Lead Source).
 
-IMPORTANT — Response size management:
-- Search and list tools return SUMMARY fields only (id, name, dates, status, location) to conserve context window
-- To get full details (BEOs, packages, vendors, financials), use the get_event, get_lead, get_booking, or get_contact tools with the specific ID
-- Always use the search/list → then get_detail pattern: find items first, then drill into the ones the user cares about
-- Do NOT call get_event/get_lead/get_booking for every item in a list — only fetch full details when the user asks about a specific item
+What still needs the Tripleseat web app: recording or editing payments, adding menu/rental line items, and creating new drop-down options. Notes (add_note) replace the old practice of typing notes in the browser; billing items such as discounts can be set with update_billing_amount.
 
-IMPORTANT — Write operations safety:
-- ALWAYS confirm with the user before creating or modifying any records
-- Summarize exactly what will be created or changed and get explicit approval before calling a write tool
-- For updates, show the current value and the proposed new value so the user can verify
-- Never bulk-create or bulk-update records without per-record user confirmation
-- When creating events, all required fields must be provided: name, event_start, event_end, account_id, contact_id, location_id, room_ids, and status
-- When creating leads, first_name, last_name, email_address, and phone_number are required
-- Task creation requires body, due_date, priority, task_type_id, assignee_ids, and site_id
+Response size: search/list tools return summary fields only. Use get_event / get_lead / get_booking / get_contact for detail, and only for the records the user asks about.
 
-When answering questions:
-- Be specific with dates, names, and numbers pulled from the data
-- Flag any missing or incomplete fields — data quality visibility is a feature
-- If a search returns no results, suggest broadening the query
-- For availability checks, always check both venues unless told otherwise`;
+Write safety:
+- Confirm with the user before creating, changing or deleting records; show current and proposed values.
+- Prefer dry_run=true first for update_billing_amount, delete_note and tripleseat_api_request.
+- When creating events, provide name, event_start, event_end, account_id, contact_id, location_id, room_ids and status.
+- When creating leads, first_name, last_name, email_address and phone_number are required.
+- Tasks require body, due_date, priority, task_type_id, assignee_ids and site_id.
+
+Report figures exactly as Tripleseat returns them, and flag missing or inconsistent fields.`;
 // ── JSON-RPC Handler ──
 function jsonrpcResponse(id, result) {
     return { jsonrpc: "2.0", id, result };
@@ -1183,7 +1186,7 @@ async function handleMessage(msg, req) {
             }
             const startTime = Date.now();
             try {
-                const result = await executeTool(toolName, toolArgs);
+                const result = await executeTool(toolName, toolArgs, req.user?.role?.name);
                 const durationMs = Date.now() - startTime;
                 (0, usage_js_1.logToolCall)(req.user?.id || null, toolName, toolArgs, true, undefined, durationMs);
                 return jsonrpcResponse(id, {
