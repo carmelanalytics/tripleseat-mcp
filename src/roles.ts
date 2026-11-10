@@ -46,6 +46,19 @@ const ALL_TOOLS = [
   "create_lead_task",
   "create_booking_task",
   "create_contact_task",
+  // Added 2026-11-09 (extra-tools.ts)
+  "list_lead_sources",
+  "set_lead_source",
+  "list_notes",
+  "add_note",
+  "update_note",
+  "delete_note",
+  "update_billing_amount",
+  "create_event_task",
+  "create_account_task",
+  "payment_transaction_report",
+  "payment_refund_report",
+  "tripleseat_api_request",
 ] as const;
 
 export { ALL_TOOLS };
@@ -126,13 +139,13 @@ export async function seedDefaultRoles(): Promise<{ created: string[]; updated: 
   const defaults = [
     {
       name: "admin",
-      description: "Full access to all 30 tools (read + write)",
+      description: "Full access to all tools (read + write)",
       allowed_tools: [...ALL_TOOLS],
     },
     {
       name: "manager",
       description: "All tools except user management",
-      allowed_tools: ALL_TOOLS.filter((t) => t !== "list_users"),
+      allowed_tools: ALL_TOOLS.filter((t) => t !== "list_users" && t !== "tripleseat_api_request"),
     },
     {
       name: "coordinator",
@@ -162,6 +175,12 @@ export async function seedDefaultRoles(): Promise<{ created: string[]; updated: 
         "update_account",
         "create_lead_task",
         "create_contact_task",
+        "list_lead_sources",
+        "set_lead_source",
+        "list_notes",
+        "add_note",
+        "update_note",
+        "create_event_task",
       ],
     },
     {
