@@ -122,8 +122,9 @@ The Knot / WeddingWire, Zola, and direct mail to events@ / info@ / patrick@) in 
   The Knot's own Tripleseat integration creates that lead. A marketplace notice with no guest email
   address goes to a person. Blank the form link in settings to switch the invitation off; the agent
   then creates the lead itself.
-- **Solstice, Bodega, yoga and general questions** are answered from info@ with the department
-  copied (solstice@, bodega@ or yoga@).
+- **Solstice, Bodega and yoga questions** are answered from the department's own address
+  (solstice@, bodega@ or yoga@). Other non-event questions are answered from info@. A guest's
+  reply to a department address lands in that department's inbox, which the agent does not watch.
 - Money, contract changes, booked-date changes, fire or road closures, complaints, press, custom
   pricing, an angry guest or a mainly personal note go to a person, with a short brief.
 
@@ -163,6 +164,7 @@ Business facts are not stored in this repository: FAQ answers sync hourly from t
 
 - Tripleseat: site 12601, location 24590 (`TRIPLESEAT_LOCATION_ID`, `TRIPLESEAT_SITE_ID`).
 - Microsoft 365: an app registration with Mail.ReadWrite and Mail.Send (application), limited by an
-  Exchange application access policy to events@, info@ and patrick@.
+  Exchange application access policy to events@, info@, patrick@, solstice@, bodega@ and yoga@
+  (the last three are send-only for the agent).
 - `PUBLIC_BASE_URL` and `CRON_SECRET` (or `AGENT_LINK_SECRET`) are needed for the Yes / No links.
 - Set the Vercel project's Function Max Duration to 300 seconds. Start in `AGENT_MODE=shadow`.

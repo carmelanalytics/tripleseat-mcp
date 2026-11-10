@@ -17,6 +17,7 @@ const onboarding_js_1 = require("./onboarding.js");
 const checks_js_1 = require("./checks.js");
 const disclosure_js_1 = require("./disclosure.js");
 const links_js_1 = require("./links.js");
+const routing_js_1 = require("./routing.js");
 const store_js_1 = require("./store.js");
 const db_js_1 = require("../db.js");
 const TRIAGE_SCHEMA = {
@@ -498,12 +499,9 @@ async function handle(rowId, mailbox, m, sendsLeft) {
         if (failed.length || draft.confidence === "low") {
             return escalate(rowId, intake, failed.length ? `Failed checks after one rewrite:\n${(0, checks_js_1.describeFailures)(failed)}` : "Low confidence", finalText, handoffBrief);
         }
-        // Event conversations run on the Tripleseat thread from events@. Restaurant, Bodega, yoga and
-        // general questions leave from info@ with the department copied.
-        const viaEvents = isEvent || fromTs;
-        const fromMailbox = viaEvents ? config_js_1.agentConfig.sendAs : config_js_1.agentConfig.generalSendAs;
-        const cc = viaEvents ? [config_js_1.agentConfig.ccOnEveryReply] : [config_js_1.agentConfig.deptCc[t.department] || ""].filter(Boolean);
-        const transport = fromTs ? "tripleseat_relay" : viaEvents ? "email_from_events" : "email_from_info";
+        // Event conversations run from events@. Solstice, Bodega and yoga replies leave from the
+        // department's own address, and general questions from info@.
+        const { fromMailbox, cc, transport } = (0, routing_js_1.routeFor)(isEvent, fromTs, t.department);
         const closeWaiting = async (action) => {
             if (waiting.length)
                 await (0, db_js_1.query)(`UPDATE agent_messages SET action=$2, review_notes='Answered in Tripleseat with message #' || $3 WHERE id = ANY($1)`, [waiting.map((w) => w.id), action, String(rowId)]);

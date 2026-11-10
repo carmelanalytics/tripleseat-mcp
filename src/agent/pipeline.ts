@@ -13,6 +13,7 @@ import { formSettings, formParagraph, priorFormInvites, isGuestAddress, ORIGIN_L
 import { runChecks, gateFailures, describeFailures, saveCheckResults, loadExemplars, pickExemplars, pickCloserVoice, CheckContext, CheckResult, GUEST_TOUR_RE } from "./checks.js";
 import { disclosureSettings, assemble, ASKED_IF_HUMAN_RE } from "./disclosure.js";
 import { answerLink, baseUrl } from "./links.js";
+import { routeFor } from "./routing.js";
 import { getSetting } from "./store.js";
 import { query, queryOne } from "../db.js";
 
@@ -635,12 +636,9 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
       return escalate(rowId, intake, failed.length ? `Failed checks after one rewrite:\n${describeFailures(failed)}` : "Low confidence", finalText, handoffBrief);
     }
 
-    // Event conversations run on the Tripleseat thread from events@. Restaurant, Bodega, yoga and
-    // general questions leave from info@ with the department copied.
-    const viaEvents = isEvent || fromTs;
-    const fromMailbox = viaEvents ? agentConfig.sendAs : agentConfig.generalSendAs;
-    const cc = viaEvents ? [agentConfig.ccOnEveryReply] : [agentConfig.deptCc[t.department] || ""].filter(Boolean);
-    const transport = fromTs ? "tripleseat_relay" : viaEvents ? "email_from_events" : "email_from_info";
+    // Event conversations run from events@. Solstice, Bodega and yoga replies leave from the
+    // department's own address, and general questions from info@.
+    const { fromMailbox, cc, transport } = routeFor(isEvent, fromTs, t.department);
     const closeWaiting = async (action: string) => {
       if (waiting.length) await query(`UPDATE agent_messages SET action=$2, review_notes='Answered in Tripleseat with message #' || $3 WHERE id = ANY($1)`, [waiting.map((w) => w.id), action, String(rowId)]);
     };

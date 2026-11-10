@@ -53,10 +53,11 @@ export const agentConfig = {
 
   // Restaurant, Bodega, yoga and general replies leave from info@ with the department copied
   generalSendAs: env("AGENT_GENERAL_SEND_AS", "info@thevillagebigsur.com"),
-  deptCc: {
-    Solstice: env("AGENT_CC_SOLSTICE", "solstice@thevillagebigsur.com"),
-    Bodega: env("AGENT_CC_BODEGA", "bodega@thevillagebigsur.com"),
-    Yoga: env("AGENT_CC_YOGA", "yoga@thevillagebigsur.com"),
+  // Solstice, Bodega and yoga replies leave from the department's own mailbox
+  deptSendAs: {
+    Solstice: env("AGENT_SEND_AS_SOLSTICE", "solstice@thevillagebigsur.com"),
+    Bodega: env("AGENT_SEND_AS_BODEGA", "bodega@thevillagebigsur.com"),
+    Yoga: env("AGENT_SEND_AS_YOGA", "yoga@thevillagebigsur.com"),
   } as Record<string, string>,
 
   // Google Sheet that holds the FAQ (shared with the service account, read-only)
