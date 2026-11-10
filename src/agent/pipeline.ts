@@ -8,8 +8,8 @@ import { classifyIntake, Intake } from "./intake.js";
 import { loadKb, kbPromptBlock } from "./kb.js";
 import { voiceGuide, activeCorrections } from "./voice.js";
 import { callJson } from "./llm.js";
-import { findGuest, dateFacts, longDate, createLead, followUpTask, originNote, idsFromTripleseatEmail, guestFromIds, GuestRecord, DateFacts } from "./ts-context.js";
-import { formSettings, formParagraph, priorFormInvites, isGuestAddress, ORIGIN_LABEL } from "./onboarding.js";
+import { findGuest, dateFacts, longDate, createLead, followUpTask, originNote, tagOrigin, idsFromTripleseatEmail, guestFromIds, GuestRecord, DateFacts } from "./ts-context.js";
+import { formSettings, formParagraph, priorFormInvites, isGuestAddress, ORIGIN_LABEL, ORIGIN_CATEGORIES, ORIGIN_LEAD_SOURCE, originQuestionText, priorOriginAnswer } from "./onboarding.js";
 import { runChecks, gateFailures, describeFailures, saveCheckResults, loadExemplars, pickExemplars, pickCloserVoice, CheckContext, CheckResult, GUEST_TOUR_RE } from "./checks.js";
 import { disclosureSettings, assemble, ASKED_IF_HUMAN_RE } from "./disclosure.js";
 import { answerLink, baseUrl } from "./links.js";
@@ -32,6 +32,8 @@ interface Triage {
   questions: string[];
   recipient_type: "couple" | "planner" | "corporate" | "family_member" | "other";
   situation_tags: string[];
+  heard_via: string;
+  heard_via_category: string;
   escalate: boolean;
   escalate_reason: string;
 }
@@ -52,10 +54,12 @@ const TRIAGE_SCHEMA = {
     questions: { type: "array", items: { type: "string" }, description: "Each distinct question or request, in the guest's order." },
     recipient_type: { type: "string", enum: ["couple", "planner", "corporate", "family_member", "other"], description: "Who is writing. planner = a professional planner or agency acting for a client (agency signature, 'my client', several dates, RFP wording). corporate = a company contact arranging a work event. Use couple or other unless the message clearly shows a planner or a company." },
     situation_tags: { type: "array", items: { type: "string", enum: ["pricing", "capacity", "tour_or_visit", "idlewild", "lodging", "food_beverage", "bar", "vendor_policy", "music_or_noise", "weather_road_fire", "logistics", "follow_up", "booked_client", "other"] }, description: "What the message is about, for choosing voice examples." },
+    heard_via: { type: "string", description: "How the guest says they found or heard about The Village, in their own words (for example: my friend Anna got married there; saw you on Instagram; we drove past last summer). Empty string if they do not say. Do not infer it." },
+    heard_via_category: { type: "string", enum: ["", ...ORIGIN_CATEGORIES], description: "The category for heard_via, or empty when heard_via is empty. friend_or_family = a friend or relative told them or they attended a friend's event; social_media = Instagram, TikTok, Pinterest and the like; drove_by = passed it on Highway 1 or stopped in; planner_or_vendor = a planner, photographer or other vendor; past_guest = they have been a guest here before." },
     escalate: { type: "boolean" },
     escalate_reason: { type: "string" },
   },
-  required: ["is_inquiry", "department", "topics", "questions", "requested_dates", "guest_count", "recipient_type", "situation_tags", "escalate", "escalate_reason", "guest_first_name", "guest_last_name", "guest_email", "guest_phone", "not_inquiry_reason"],
+  required: ["is_inquiry", "department", "topics", "questions", "requested_dates", "guest_count", "recipient_type", "situation_tags", "heard_via", "heard_via_category", "escalate", "escalate_reason", "guest_first_name", "guest_last_name", "guest_email", "guest_phone", "not_inquiry_reason"],
 };
 
 const ESCALATION_RULES = `
@@ -117,6 +121,8 @@ interface ReplyPlan {
   packetLink: string;
   /** The system will add the inquiry form invitation, so the draft ends after its answer. */
   formInvite: boolean;
+  /** The system will close the reply with "How'd you come across us?", so the draft asks nothing. */
+  originQuestion: boolean;
 }
 
 /** The guest asked for the Event Info Packet (or a brochure or price sheet) by name. */
@@ -164,8 +170,15 @@ function planBlock(plan: ReplyPlan, facts: DateFacts): string {
         "So do not mention the form, a link or the packet yourself, and do not offer times for a visit."
     );
     if (plan.guestAskedTour) lines.push("The guest asked about visiting: say in one sentence that we would be glad to show them around. The added paragraph explains that the form is how the tour gets scheduled.");
+    if (plan.originQuestion) lines.push("The system also closes the reply with a question about how they came across us. Do not ask that yourself.");
     return lines.join("\n");
   }
+  if (plan.originQuestion)
+    lines.push(
+      "Ending: this is our first reply and we do not know how they found us, so the system closes the reply with that question, after your last paragraph. " +
+        "Stop after your answer: ask no question of your own, write no closing line, and do not ask how they found us."
+    );
+  else
   lines.push(
     `The one question, as its own final paragraph before the sign-off: "${plan.question}" A close variation is fine. ` +
       `If an earlier reply on this thread already asked it, ask the next easiest question instead.`
@@ -416,18 +429,36 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
 
     // A lead that began outside Tripleseat (we invited the guest to the form) gets its origin written on it.
     if (fromTs && guest.leadId && t.guest_email && agentConfig.mode === "live") {
-      const began = await query<{ id: number; source: string; mailbox: string; created_at: string }>(
-        `SELECT id, source, mailbox, created_at FROM agent_messages
-         WHERE form_invited_at IS NOT NULL AND origin_noted_at IS NULL AND LOWER(guest_email) = LOWER($1)
-           AND created_at > NOW() - INTERVAL '120 days' ORDER BY id LIMIT 1`,
-        [t.guest_email]
+      const fullName = `${t.guest_first_name} ${t.guest_last_name}`.trim();
+      const began = await query<{ id: number; source: string; mailbox: string; created_at: string; origin_answer: string | null; origin_category: string | null }>(
+        `SELECT id, source, mailbox, created_at, origin_answer, origin_category FROM agent_messages
+         WHERE id <> $3 AND (form_invited_at IS NOT NULL OR origin_answer IS NOT NULL) AND origin_noted_at IS NULL
+           AND (LOWER(guest_email) = LOWER($1) OR ($2 <> '' AND LOWER(guest_name) = LOWER($2)))
+           AND created_at > NOW() - INTERVAL '120 days' ORDER BY id`,
+        [t.guest_email, fullName, rowId]
       ).catch(() => []);
       if (began.length) {
         const first = began[0];
+        const said = began.find((b) => b.origin_answer);
         const on = new Date(first.created_at).toLocaleDateString("en-US", { timeZone: agentConfig.timezone });
+        const ids = began.map((b) => b.id);
+        // A marketplace inquiry carries its own source; otherwise use what the guest told us, if anything.
+        const sourceName = first.source === "weddingpro" ? "The Knot" : first.source === "zola" ? "Zola" : said ? ORIGIN_LEAD_SOURCE[said.origin_category || "other"] || "Other" : "";
         await originNote(guest.leadId, `ORIGIN: ${ORIGIN_LABEL[first.source] || first.source} to ${first.mailbox} on ${on}. Invited to the events inquiry form by the inquiry agent.`)
-          .then(() => query(`UPDATE agent_messages SET origin_noted_at = NOW() WHERE form_invited_at IS NOT NULL AND LOWER(guest_email) = LOWER($1)`, [t.guest_email]))
+          .then(() => (sourceName ? tagOrigin(guest.leadId!, said?.origin_answer || ORIGIN_LABEL[first.source] || first.source, sourceName) : ""))
+          .then(() => query(`UPDATE agent_messages SET origin_noted_at = NOW() WHERE id = ANY($1)`, [ids]))
           .catch((e) => query(`UPDATE agent_messages SET error=$2 WHERE id=$1`, [rowId, `Origin note not written on lead ${guest.leadId}: ${String(e.message).slice(0, 200)}`]));
+      }
+    }
+
+    // The guest said how they found us: keep it, and write it on their Tripleseat lead.
+    if (t.heard_via.trim()) {
+      const category = (ORIGIN_CATEGORIES as readonly string[]).includes(t.heard_via_category) ? t.heard_via_category : "other";
+      await query(`UPDATE agent_messages SET origin_answer=$2, origin_category=$3 WHERE id=$1`, [rowId, t.heard_via.trim().slice(0, 500), category]);
+      if (guest.leadId && agentConfig.mode === "live") {
+        await tagOrigin(guest.leadId, t.heard_via.trim(), ORIGIN_LEAD_SOURCE[category] || "Other")
+          .then((done) => query(`UPDATE agent_messages SET origin_noted_at = NOW(), review_notes = COALESCE(review_notes || ' | ', '') || $2 WHERE id=$1`, [rowId, `origin: ${done}`]))
+          .catch((e) => query(`UPDATE agent_messages SET error=$2 WHERE id=$1`, [rowId, `Origin not written on lead ${guest.leadId}: ${String(e.message).slice(0, 200)}`]));
       }
     }
 
@@ -487,6 +518,15 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
     }
 
     const facts = await dateFacts(t.requested_dates, todayLA());
+    const firstReply = !history.repliedBefore;
+
+    // Close the first reply to an event prospect with "How'd you come across us?" unless that is
+    // already known: a marketplace inquiry, a source on the Tripleseat lead, or the guest said so.
+    const originText = await originQuestionText();
+    const originKnown =
+      intake.source === "weddingpro" || intake.source === "zola" || waiting.some((w) => w.source === "weddingpro" || w.source === "zola") ||
+      !!t.heard_via.trim() || !!guest.origin || !!(await priorOriginAnswer(guestEmail).catch(() => ""));
+    const askOrigin = isEvent && guest.stage !== "booked" && firstReply && !originKnown && !!originText;
 
     // Decide in code how the reply ends: one question picked by date state, tour invitation in a P.S.
     const prospect = isEvent && guest.stage !== "booked";
@@ -496,7 +536,7 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
       stage: prospect ? "prospect" : guest.stage === "booked" ? "booked" : "general",
       recipientType: t.recipient_type,
       signoffName: isEvent ? "The Village Events Team" : "The Village Big Sur",
-      question: formInvite ? "" : QUESTION_BY_DATE_STATE[facts.state],
+      question: formInvite || askOrigin ? "" : QUESTION_BY_DATE_STATE[facts.state],
       tourPs: prospect && !formInvite && !guestAskedTour && !history.invitedBefore,
       tourPsReason: formInvite ? "the inquiry form is the one ask" : history.invitedBefore ? "an earlier reply already invited them" : "not a prospect",
       tourLink: (await getSetting("tour_link", "")).trim(),
@@ -504,6 +544,7 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
       guestAskedPacket,
       packetLink: (await getSetting("packet_link", "")).trim(),
       formInvite,
+      originQuestion: askOrigin,
     };
 
     // Voice examples: a few of Patrick's own replies from the same kind of situation and reader.
@@ -538,7 +579,6 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
     // Yes/no checks. One automatic rewrite if a blocking check fails, then a person.
     const kbNow = kbPromptBlock(await loadKb());
     const disclosure = await disclosureSettings();
-    const firstReply = !history.repliedBefore;
     const ctx: CheckContext = {
       rowId,
       guestText: intake.text,
@@ -554,6 +594,8 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
       guestAskedPacket,
       formInvite,
       formParagraph: formText,
+      originQuestion: askOrigin,
+      originParagraph: originText,
       signoffName: plan.signoffName,
       isEvent,
       firstReply,
@@ -570,7 +612,7 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
       attempts = 2;
     }
     // The model's text plus the fixed disclosure wording is what the guest receives.
-    const finalText = assemble(draft.reply_text, disclosure, firstReply, isEvent, formText);
+    const finalText = assemble(draft.reply_text, disclosure, firstReply, isEvent, formText, askOrigin ? originText : "");
     const failed = gateFailures(results);
     const reported = results.filter((r) => !r.pass && r.mode === "report");
 
@@ -627,7 +669,7 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
     } else {
       await sendFrom(fromMailbox, outsideTo || intake.replyAddress, intake.subject, finalText, `${intake.fromName} <${intake.fromAddress}>`, m.body?.content || intake.text, cc);
     }
-    await query(`UPDATE agent_messages SET action='sent', sent_at=NOW(), send_transport=$2, form_invited_at = CASE WHEN $3 THEN NOW() ELSE form_invited_at END WHERE id=$1`, [rowId, transport, formInvite]);
+    await query(`UPDATE agent_messages SET action='sent', sent_at=NOW(), send_transport=$2, form_invited_at = CASE WHEN $3 THEN NOW() ELSE form_invited_at END, origin_asked_at = CASE WHEN $4 THEN NOW() ELSE origin_asked_at END WHERE id=$1`, [rowId, transport, formInvite, askOrigin]);
     await closeWaiting("answered_in_ts");
     await categorize(mailbox, m.id, "Agent replied");
     await sendCopy(rowId, intake, finalText, true, outsideTo || intake.replyAddress).catch(() => {});

@@ -11,12 +11,19 @@ exports.dateFacts = dateFacts;
 exports.createLead = createLead;
 exports.followUpTask = followUpTask;
 exports.originNote = originNote;
+exports.tagOrigin = tagOrigin;
 const tripleseat_js_1 = require("../tripleseat.js");
 const config_js_1 = require("./config.js");
 function rows(data) {
     if (Array.isArray(data))
         return data;
     return data?.results || data?.leads || data?.events || data?.contacts || [];
+}
+/** A lead source or referral already on the Tripleseat lead that says how the guest found us. */
+function knownOrigin(l) {
+    const names = [l?.lead_source?.name, ...(l?.lead_sources || []).map((x) => x?.name)].filter(Boolean);
+    const real = names.find((n) => !/tripleseat web lead|direct book/i.test(n));
+    return real || String(l?.referral_source_other || "").trim() || (l?.referral_source_id ? "referral recorded" : "") || undefined;
 }
 /** Find what Tripleseat already knows about this guest (by email). */
 async function findGuest(email) {
@@ -39,6 +46,7 @@ async function findGuest(email) {
                 stage: "lead",
                 leadId: String(l.id),
                 summary: `Existing lead #${l.id}: ${l.first_name || ""} ${l.last_name || ""}, event date ${l.event_date || "not set"}, guests ${l.guest_count || "not set"}, status ${l.status || "open"}.`,
+                origin: knownOrigin(l),
             };
         }
         if (ev.length) {
@@ -72,7 +80,7 @@ async function guestFromIds(ids) {
         if (ids.leadId) {
             const { data } = await (0, tripleseat_js_1.tripleseatGet)(`/leads/${ids.leadId}`);
             const l = data?.lead || data;
-            return { stage: "lead", leadId: ids.leadId, summary: `Lead #${ids.leadId}: ${l?.first_name || ""} ${l?.last_name || ""}, event date ${l?.event_date || "not set"}, guests ${l?.guest_count || "not set"}.` };
+            return { stage: "lead", leadId: ids.leadId, origin: knownOrigin(l), summary: `Lead #${ids.leadId}: ${l?.first_name || ""} ${l?.last_name || ""}, event date ${l?.event_date || "not set"}, guests ${l?.guest_count || "not set"}.` };
         }
     }
     catch {
@@ -209,4 +217,50 @@ async function originNote(leadId, text) {
         }
     }
     throw lastErr;
+}
+let leadSourceCache = null;
+/** Tripleseat's Lead Source ids by name, read from the site record and kept for an hour. */
+async function leadSourceIds() {
+    if (leadSourceCache && Date.now() - leadSourceCache.at < 3600_000)
+        return leadSourceCache.byName;
+    const byName = new Map();
+    const walk = (node, key = "") => {
+        if (Array.isArray(node)) {
+            if (/lead_source/i.test(key))
+                for (const x of node)
+                    if (x && x.id && x.name)
+                        byName.set(String(x.name).toLowerCase(), Number(x.id));
+            for (const x of node)
+                walk(x, key);
+        }
+        else if (node && typeof node === "object") {
+            for (const [k, v] of Object.entries(node))
+                walk(v, k);
+        }
+    };
+    try {
+        walk((await (0, tripleseat_js_1.tripleseatGet)("/sites")).data);
+    }
+    catch {
+        /* the note below still records the answer */
+    }
+    leadSourceCache = { at: Date.now(), byName };
+    return byName;
+}
+/**
+ * Tag a lead with how the guest found us: always an "ORIGIN:" note in the guest's own words, and the
+ * Lead Source drop-down when Tripleseat has a source by that name. Returns what was done.
+ */
+async function tagOrigin(leadId, answer, sourceName) {
+    await originNote(leadId, `ORIGIN: the guest says they found us through: "${answer.slice(0, 300)}". Lead source: ${sourceName}.`);
+    const id = (await leadSourceIds()).get(sourceName.toLowerCase());
+    if (!id)
+        return `note written; Lead Source "${sourceName}" not set (no id found for it)`;
+    try {
+        await (0, tripleseat_js_1.tripleseatPut)(`/leads/${leadId}`, { lead: { lead_source_id: id, selected_lead_sources_attributes: [{ lead_source_id: id }] } });
+        return `note written; Lead Source set to ${sourceName}`;
+    }
+    catch (e) {
+        return `note written; Lead Source not set (${String(e.message).slice(0, 120)})`;
+    }
 }

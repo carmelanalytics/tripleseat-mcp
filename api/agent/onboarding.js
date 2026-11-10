@@ -12,11 +12,13 @@
  * events team's own replies, so the link is always exact and the model never writes it.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ORIGIN_LABEL = exports.DEFAULT_FORM_TEXT_TOUR = exports.DEFAULT_FORM_TEXT = void 0;
+exports.ORIGIN_LEAD_SOURCE = exports.ORIGIN_CATEGORIES = exports.DEFAULT_ORIGIN_TEXT = exports.ORIGIN_LABEL = exports.DEFAULT_FORM_TEXT_TOUR = exports.DEFAULT_FORM_TEXT = void 0;
 exports.formSettings = formSettings;
 exports.formParagraph = formParagraph;
 exports.priorFormInvites = priorFormInvites;
 exports.isGuestAddress = isGuestAddress;
+exports.originQuestionText = originQuestionText;
+exports.priorOriginAnswer = priorOriginAnswer;
 const config_js_1 = require("./config.js");
 const store_js_1 = require("./store.js");
 const db_js_1 = require("../db.js");
@@ -58,3 +60,34 @@ exports.ORIGIN_LABEL = {
     weddingpro: "The Knot / WeddingWire (WeddingPro) inquiry",
     zola: "Zola inquiry",
 };
+// ─────────────────────────── "How'd you come across us?" ───────────────────────────
+// The first reply to an event prospect ends with this question unless we already know how they found
+// us. The wording is fixed (editable in settings) and added in code as the last paragraph before the
+// sign-off. When the guest answers, the answer is written on their Tripleseat lead.
+exports.DEFAULT_ORIGIN_TEXT = "One last thing. How'd you come across us? A friend, a scroll, or a detour down Highway 1?";
+async function originQuestionText() {
+    // A saved blank switches the question off.
+    return (await (0, store_js_1.getSetting)("origin_question_text", exports.DEFAULT_ORIGIN_TEXT)).trim();
+}
+exports.ORIGIN_CATEGORIES = ["friend_or_family", "social_media", "web_search", "the_knot", "weddingwire", "zola", "drove_by", "planner_or_vendor", "past_guest", "press", "other"];
+/** The Tripleseat Lead Source each answer maps to (names as they appear in Tripleseat's Lead Source list). */
+exports.ORIGIN_LEAD_SOURCE = {
+    friend_or_family: "Referral Client",
+    planner_or_vendor: "Referral Industry",
+    social_media: "Instagram",
+    drove_by: "Walk-in",
+    past_guest: "Repeat",
+    the_knot: "The Knot",
+    weddingwire: "Wedding Wire",
+    zola: "Zola",
+    web_search: "Other",
+    press: "Other",
+    other: "Other",
+};
+/** Has this guest already told us how they found us (on an earlier message)? */
+async function priorOriginAnswer(guestEmail) {
+    if (!guestEmail)
+        return "";
+    const row = await (0, db_js_1.query)(`SELECT origin_answer FROM agent_messages WHERE origin_answer IS NOT NULL AND LOWER(guest_email) = LOWER($1) ORDER BY id DESC LIMIT 1`, [guestEmail]);
+    return row[0]?.origin_answer || "";
+}

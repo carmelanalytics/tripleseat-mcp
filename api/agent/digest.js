@@ -38,6 +38,7 @@ async function sendDigest() {
        AND form_invited_at < NOW() - INTERVAL '3 days' AND form_invited_at > NOW() - INTERVAL '30 days'
      ORDER BY LOWER(guest_email), form_invited_at`).catch(() => []);
     const notAnswered = [...ignored, ...waiting];
+    const origins = rows.filter((r) => r.origin_answer);
     const openQs = rows.flatMap((r) => (r.open_questions || []).map((q) => ({ q, r })));
     const card = (r) => `
 <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin:10px 0">
@@ -59,6 +60,7 @@ ${escalated.length ? `<h3>Handed to a person</h3>${escalated.map(card).join("")}
 ${sent.length ? `<h3>Sent</h3>${sent.map(card).join("")}` : ""}
 ${drafted.length ? `<h3>Drafted, not sent</h3>${drafted.map(card).join("")}` : ""}
 ${errored.length ? `<h3>Errors</h3>${errored.map(card).join("")}` : ""}
+${origins.length ? `<h3>How guests said they found us</h3><ul>${origins.map((o) => `<li>${esc(o.guest_name || o.from_address)}: "${esc(o.origin_answer)}" (${esc((o.origin_category || "").replace(/_/g, " "))})${o.origin_noted_at ? ", written on the Tripleseat lead" : ", not yet on a Tripleseat lead"}</li>`).join("")}</ul>` : ""}
 ${notOnboarded.length ? `<h3>Invited to the inquiry form, not in Tripleseat yet</h3><ul>${notOnboarded.map((n) => `<li>${esc(n.guest_name || n.guest_email)} &lt;${esc(n.guest_email)}&gt; &middot; ${esc(n.source)} &middot; invited ${esc((n.invited || "").slice(0, 10))}</li>`).join("")}</ul>` : ""}
 ${notAnswered.length ? `<h3>Not answered, and why</h3><table style="border-collapse:collapse;font-size:13px"><tr><th style="text-align:left;padding:4px 8px">From</th><th style="text-align:left;padding:4px 8px">Subject</th><th style="text-align:left;padding:4px 8px">Reason</th></tr>${notAnswered
         .map((r) => `<tr><td style="padding:4px 8px;border-top:1px solid #ddd">${esc(r.guest_name || r.from_address)}</td><td style="padding:4px 8px;border-top:1px solid #ddd">${esc((r.subject || "").slice(0, 80))}</td><td style="padding:4px 8px;border-top:1px solid #ddd">${esc(r.action === "awaiting_ts" ? "Waiting for its Tripleseat thread" : r.review_notes || "Not an inquiry")}</td></tr>`)

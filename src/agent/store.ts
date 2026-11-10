@@ -137,6 +137,9 @@ export async function migrateAgent(): Promise<void> {
     "model_reply_text TEXT",
     "form_invited_at TIMESTAMPTZ",
     "origin_noted_at TIMESTAMPTZ",
+    "origin_answer TEXT",
+    "origin_category TEXT",
+    "origin_asked_at TIMESTAMPTZ",
   ]) {
     await query(`ALTER TABLE agent_messages ADD COLUMN IF NOT EXISTS ${col}`);
   }

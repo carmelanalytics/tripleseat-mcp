@@ -38,7 +38,7 @@ export async function disclosureSettings(): Promise<Disclosure> {
 const SIGNOFF_RE = /^(warmly|best|thanks|thank you|cheers|sincerely|kindly)[,.!]?\s*(\n|$)/i;
 
 /** Put the disclosure sentence (first reply only) and the footer (every reply) around the model's text. */
-export function assemble(modelText: string, d: Disclosure, firstReply: boolean, isEvent: boolean, formParagraph = ""): string {
+export function assemble(modelText: string, d: Disclosure, firstReply: boolean, isEvent: boolean, formParagraph = "", closingQuestion = ""): string {
   const paras = modelText.replace(/\r/g, "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   const signoffAt = () => {
     const i = paras.findIndex((p) => SIGNOFF_RE.test(p) || /^The Village\b/m.test(p.split("\n").slice(-1)[0] || ""));
@@ -52,6 +52,8 @@ export function assemble(modelText: string, d: Disclosure, firstReply: boolean, 
   }
   // The inquiry form invitation is the last thing before the sign-off, so the reply ends on the ask.
   if (formParagraph) paras.splice(signoffAt(), 0, formParagraph.trim());
+  // "How'd you come across us?" closes the first reply: it is the last paragraph before the sign-off.
+  if (closingQuestion) paras.splice(signoffAt(), 0, closingQuestion.trim());
   if (d.on && d.footer) paras.push(d.footer);
   return paras.join("\n\n");
 }

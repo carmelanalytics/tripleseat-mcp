@@ -40,6 +40,7 @@ export const CHECKS: CheckDef[] = [
   { id: "question_last", label: "The question is its own final paragraph, with no closer after it", kind: "code", defaultMode: "gate" },
   { id: "tour_in_ps_only", label: "Tour invitation appears only in the P.S., and the P.S. is a statement", kind: "code", defaultMode: "gate" },
   { id: "form_invite", label: "Inquiry form invitation is added by the system, once, and only for guests not yet in Tripleseat", kind: "code", defaultMode: "gate" },
+  { id: "origin_question", label: "\"How'd you come across us?\" closes the first reply to a prospect, added once by the system, unless the source is already known", kind: "code", defaultMode: "gate" },
   { id: "packet_on_request", label: "Event Info Packet mentioned only when the guest asked for it", kind: "code", defaultMode: "gate" },
   { id: "length", label: "Length fits the number of questions asked", kind: "code", defaultMode: "gate" },
   { id: "plain_text", label: "Plain text with sign-off: no lists, bold, headings or emoji; one exclamation mark at most", kind: "code", defaultMode: "gate" },
@@ -118,6 +119,9 @@ export interface CheckContext {
   /** This reply invites a guest who is not in Tripleseat yet to the inquiry form (added in code). */
   formInvite: boolean;
   formParagraph: string;
+  /** This first reply closes with the "How'd you come across us?" question (added in code). */
+  originQuestion: boolean;
+  originParagraph: string;
   /** The name line the reply must sign off with, e.g. "The Village Events Team". */
   signoffName: string;
   isEvent: boolean;
@@ -194,7 +198,7 @@ export async function codeChecks(text: string, ctx: CheckContext): Promise<Omit<
   const maxLong = Number(await getSetting("reply_max_words_long", "150")) || 150;
   const seen = await recentSentences(ctx).catch(() => new Set<string>());
   const out = structureChecks(text, ctx, { min, maxShort, maxLong, seen });
-  const finalText = assemble(text, ctx.disclosure, ctx.firstReply, ctx.isEvent, ctx.formInvite ? ctx.formParagraph : "");
+  const finalText = assemble(text, ctx.disclosure, ctx.firstReply, ctx.isEvent, ctx.formInvite ? ctx.formParagraph : "", ctx.originQuestion ? ctx.originParagraph : "");
   const d = disclosureCheck(text, finalText, ctx.disclosure, ctx.firstReply, ctx.isEvent, ctx.guestAskedIfHuman);
   out.push({ id: "disclosure", kind: "code", pass: d.pass, evidence: d.evidence });
   // The assembled reply must carry the invitation exactly once when it is due.
@@ -204,13 +208,19 @@ export async function codeChecks(text: string, ctx: CheckContext): Promise<Omit<
     fi.pass = n === 1;
     fi.evidence = n === 1 ? "invitation added once, above the sign-off" : `invitation appears ${n} times in the assembled reply`;
   }
+  const oq = out.find((r) => r.id === "origin_question");
+  if (oq && oq.pass && ctx.originQuestion) {
+    const n = finalText.split(ctx.originParagraph.trim()).length - 1;
+    oq.pass = n === 1;
+    oq.evidence = n === 1 ? "closing question added once, as the last paragraph before the sign-off" : `closing question appears ${n} times in the assembled reply`;
+  }
   return out;
 }
 
 /** The rule-decided checks, with no database access (so they can be tested on their own). */
 export function structureChecks(
   text: string,
-  ctx: Pick<CheckContext, "approved" | "prospect" | "guestAskedTour" | "guestAskedPacket" | "formInvite" | "questions" | "signoffName">,
+  ctx: Pick<CheckContext, "approved" | "prospect" | "guestAskedTour" | "guestAskedPacket" | "formInvite" | "originQuestion" | "questions" | "signoffName">,
   opts: { min: number; maxShort: number; maxLong: number; seen: Set<string> }
 ): Omit<CheckResult, "mode">[] {
   const p = parseReply(text);
@@ -225,11 +235,13 @@ export function structureChecks(
   // one_question
   const qCount = (bodyText.match(/\?/g) || []).length;
   // When the reply carries the inquiry form invitation, the form is the one ask, so the draft asks nothing.
-  const qOk = ctx.formInvite ? qCount === 0 : ctx.prospect ? qCount === 1 : qCount <= 1;
+  // or closes with the system's own question about how they found us.
+  const systemAsks = ctx.formInvite || ctx.originQuestion;
+  const qOk = systemAsks ? qCount === 0 : ctx.prospect ? qCount === 1 : qCount <= 1;
   add(
     "one_question",
     qOk,
-    `${qCount} question mark${qCount === 1 ? "" : "s"} in the body${ctx.formInvite ? " (the inquiry form is the one ask, so the draft asks nothing)" : ctx.prospect ? " (a prospect reply needs exactly one)" : ""}`
+    `${qCount} question mark${qCount === 1 ? "" : "s"} in the body${systemAsks ? " (the system adds the one ask to this reply, so the draft asks nothing)" : ctx.prospect ? " (a prospect reply needs exactly one)" : ""}`
   );
 
   // question_last
@@ -270,6 +282,16 @@ export function structureChecks(
         : ctx.formInvite
           ? "the draft leaves the invitation to the system"
           : "no form invitation in this reply"
+    );
+  }
+
+  // origin_question: the draft never asks how the guest found us; the system adds that question.
+  {
+    const wrote = /\bhow(['’]d| did| have) you (come across|hear about|hear of|find|found|discover)\b|\bhow you (found|heard about|came across) us\b/i.test(text);
+    add(
+      "origin_question",
+      !wrote,
+      wrote ? "the draft asks how the guest found us in its own words" : ctx.originQuestion ? "the draft leaves the closing question to the system" : "not asked in this reply"
     );
   }
 

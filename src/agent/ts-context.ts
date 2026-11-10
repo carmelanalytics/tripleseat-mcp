@@ -2,7 +2,7 @@
  * Live Tripleseat lookups and record-keeping for the inquiry agent.
  */
 
-import { tripleseatGet, tripleseatPost, formatDate } from "../tripleseat.js";
+import { tripleseatGet, tripleseatPost, tripleseatPut, formatDate } from "../tripleseat.js";
 import { agentConfig } from "./config.js";
 
 function rows(data: any): any[] {
@@ -15,6 +15,15 @@ export interface GuestRecord {
   leadId?: string;
   eventId?: string;
   summary: string;
+  /** How the lead found us, when Tripleseat already records it (a lead source other than the web form, or a referral). */
+  origin?: string;
+}
+
+/** A lead source or referral already on the Tripleseat lead that says how the guest found us. */
+function knownOrigin(l: any): string | undefined {
+  const names: string[] = [l?.lead_source?.name, ...((l?.lead_sources || []) as any[]).map((x) => x?.name)].filter(Boolean);
+  const real = names.find((n) => !/tripleseat web lead|direct book/i.test(n));
+  return real || String(l?.referral_source_other || "").trim() || (l?.referral_source_id ? "referral recorded" : "") || undefined;
 }
 
 /** Find what Tripleseat already knows about this guest (by email). */
@@ -37,6 +46,7 @@ export async function findGuest(email: string): Promise<GuestRecord> {
         stage: "lead",
         leadId: String(l.id),
         summary: `Existing lead #${l.id}: ${l.first_name || ""} ${l.last_name || ""}, event date ${l.event_date || "not set"}, guests ${l.guest_count || "not set"}, status ${l.status || "open"}.`,
+        origin: knownOrigin(l),
       };
     }
     if (ev.length) {
@@ -71,7 +81,7 @@ export async function guestFromIds(ids: { leadId?: string; eventId?: string }): 
     if (ids.leadId) {
       const { data } = await tripleseatGet(`/leads/${ids.leadId}`);
       const l: any = (data as any)?.lead || data;
-      return { stage: "lead", leadId: ids.leadId, summary: `Lead #${ids.leadId}: ${l?.first_name || ""} ${l?.last_name || ""}, event date ${l?.event_date || "not set"}, guests ${l?.guest_count || "not set"}.` };
+      return { stage: "lead", leadId: ids.leadId, origin: knownOrigin(l), summary: `Lead #${ids.leadId}: ${l?.first_name || ""} ${l?.last_name || ""}, event date ${l?.event_date || "not set"}, guests ${l?.guest_count || "not set"}.` };
     }
   } catch {
     /* fall through */
@@ -226,4 +236,43 @@ export async function originNote(leadId: string, text: string): Promise<void> {
     }
   }
   throw lastErr;
+}
+
+let leadSourceCache: { at: number; byName: Map<string, number> } | null = null;
+
+/** Tripleseat's Lead Source ids by name, read from the site record and kept for an hour. */
+async function leadSourceIds(): Promise<Map<string, number>> {
+  if (leadSourceCache && Date.now() - leadSourceCache.at < 3600_000) return leadSourceCache.byName;
+  const byName = new Map<string, number>();
+  const walk = (node: any, key = "") => {
+    if (Array.isArray(node)) {
+      if (/lead_source/i.test(key)) for (const x of node) if (x && x.id && x.name) byName.set(String(x.name).toLowerCase(), Number(x.id));
+      for (const x of node) walk(x, key);
+    } else if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node)) walk(v, k);
+    }
+  };
+  try {
+    walk((await tripleseatGet("/sites")).data);
+  } catch {
+    /* the note below still records the answer */
+  }
+  leadSourceCache = { at: Date.now(), byName };
+  return byName;
+}
+
+/**
+ * Tag a lead with how the guest found us: always an "ORIGIN:" note in the guest's own words, and the
+ * Lead Source drop-down when Tripleseat has a source by that name. Returns what was done.
+ */
+export async function tagOrigin(leadId: string, answer: string, sourceName: string): Promise<string> {
+  await originNote(leadId, `ORIGIN: the guest says they found us through: "${answer.slice(0, 300)}". Lead source: ${sourceName}.`);
+  const id = (await leadSourceIds()).get(sourceName.toLowerCase());
+  if (!id) return `note written; Lead Source "${sourceName}" not set (no id found for it)`;
+  try {
+    await tripleseatPut(`/leads/${leadId}`, { lead: { lead_source_id: id, selected_lead_sources_attributes: [{ lead_source_id: id }] } });
+    return `note written; Lead Source set to ${sourceName}`;
+  } catch (e: any) {
+    return `note written; Lead Source not set (${String(e.message).slice(0, 120)})`;
+  }
 }

@@ -131,6 +131,11 @@ The Knot / WeddingWire, Zola, and direct mail to events@ / info@ / patrick@) in 
 
 - Event prospects: answer first, then one question in its own last paragraph, picked by the state of
   the date (open, taken, none given). The tour invitation is a P.S.
+- The first reply to an event prospect, on a Tripleseat thread or by email, closes with "How'd you
+  come across us? A friend, a scroll, or a detour down Highway 1?" unless the source is already
+  known (a marketplace inquiry, a source on the Tripleseat lead, or the guest said so). It is added
+  in code, replaces the date question in that reply, and is editable in settings. When the guest
+  answers, the agent writes "ORIGIN: ..." on the Tripleseat lead and sets the Lead Source.
 - The Event Info Packet is mentioned only when the guest asks for it. Otherwise the events team sends it.
 - AI disclosure: one sentence in the first reply and a footer on every reply, both added in code and
   editable in settings (California Business and Professions Code 17940 to 17943).

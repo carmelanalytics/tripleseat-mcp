@@ -15,7 +15,7 @@ import { sendDigest } from "./digest.js";
 import { syncKbFromSheet } from "./kb.js";
 import { DEFAULT_VOICE_GUIDE, neutralise } from "./voice.js";
 import { disclosureSettings, DEFAULT_LINE_EVENTS, DEFAULT_LINE_GENERAL, DEFAULT_FOOTER } from "./disclosure.js";
-import { formSettings } from "./onboarding.js";
+import { formSettings, originQuestionText } from "./onboarding.js";
 import { answerKey, answerKeyValid } from "./links.js";
 import { CHECKS, checkModes } from "./checks.js";
 import { query, queryOne } from "../db.js";
@@ -418,6 +418,7 @@ agentAdminRouter.get("/settings", async (_req, res) => {
   const tourLink = await getSetting("tour_link", "");
   const packetLink = await getSetting("packet_link", "");
   const form = await formSettings();
+  const originText = await originQuestionText();
   const minWords = await getSetting("reply_min_words", "30");
   const maxShort = await getSetting("reply_max_words_short", "120");
   const maxLong = await getSetting("reply_max_words_long", "150");
@@ -449,6 +450,9 @@ up to <input name="reply_max_words_short" size="4" value="${esc(maxShort)}"> for
 <p>Events inquiry form link:<br>${line("inquiry_form_link", form.link)}</p>
 <p>Invitation:<br><textarea name="inquiry_form_text" rows="5">${esc(form.text)}</textarea></p>
 <p>Invitation when the guest asked for a tour:<br><textarea name="inquiry_form_text_tour" rows="4">${esc(form.textTour)}</textarea></p>
+<h3>How they found us</h3>
+<p>The first reply to an event prospect, on a Tripleseat thread or by email, closes with this question unless the source is already known (a Knot, WeddingWire or Zola inquiry, a source already on the Tripleseat lead, or the guest said so). It replaces the usual closing question in that reply. When the guest answers, the answer is written on their Tripleseat lead and the Lead Source is set. Leave blank to switch it off.</p>
+<p><textarea name="origin_question_text" rows="2">${esc(originText)}</textarea></p>
 <h3>AI disclosure</h3>
 <p>Added to every reply by the system, so the wording cannot drift. The sentence goes in the first reply to a guest; the footer goes on every reply.</p>
 <p>Disclosure: ${onOff("disclosure_mode", d.on ? "on" : "off")}</p>
@@ -469,6 +473,7 @@ agentAdminRouter.post("/settings", async (req, res) => {
   await setSetting("tour_link", text("tour_link"));
   await setSetting("packet_link", text("packet_link"));
   await setSetting("inquiry_form_link", text("inquiry_form_link"));
+  await setSetting("origin_question_text", String(req.body.origin_question_text || "").trim());
   await setSetting("inquiry_form_text", String(req.body.inquiry_form_text || "").trim());
   await setSetting("inquiry_form_text_tour", String(req.body.inquiry_form_text_tour || "").trim());
   await setSetting("reply_min_words", num("reply_min_words", 30));

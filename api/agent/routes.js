@@ -403,6 +403,7 @@ exports.agentAdminRouter.get("/settings", async (_req, res) => {
     const tourLink = await (0, store_js_1.getSetting)("tour_link", "");
     const packetLink = await (0, store_js_1.getSetting)("packet_link", "");
     const form = await (0, onboarding_js_1.formSettings)();
+    const originText = await (0, onboarding_js_1.originQuestionText)();
     const minWords = await (0, store_js_1.getSetting)("reply_min_words", "30");
     const maxShort = await (0, store_js_1.getSetting)("reply_max_words_short", "120");
     const maxLong = await (0, store_js_1.getSetting)("reply_max_words_long", "150");
@@ -431,6 +432,9 @@ up to <input name="reply_max_words_short" size="4" value="${esc(maxShort)}"> for
 <p>Events inquiry form link:<br>${line("inquiry_form_link", form.link)}</p>
 <p>Invitation:<br><textarea name="inquiry_form_text" rows="5">${esc(form.text)}</textarea></p>
 <p>Invitation when the guest asked for a tour:<br><textarea name="inquiry_form_text_tour" rows="4">${esc(form.textTour)}</textarea></p>
+<h3>How they found us</h3>
+<p>The first reply to an event prospect, on a Tripleseat thread or by email, closes with this question unless the source is already known (a Knot, WeddingWire or Zola inquiry, a source already on the Tripleseat lead, or the guest said so). It replaces the usual closing question in that reply. When the guest answers, the answer is written on their Tripleseat lead and the Lead Source is set. Leave blank to switch it off.</p>
+<p><textarea name="origin_question_text" rows="2">${esc(originText)}</textarea></p>
 <h3>AI disclosure</h3>
 <p>Added to every reply by the system, so the wording cannot drift. The sentence goes in the first reply to a guest; the footer goes on every reply.</p>
 <p>Disclosure: ${onOff("disclosure_mode", d.on ? "on" : "off")}</p>
@@ -450,6 +454,7 @@ exports.agentAdminRouter.post("/settings", async (req, res) => {
     await (0, store_js_1.setSetting)("tour_link", text("tour_link"));
     await (0, store_js_1.setSetting)("packet_link", text("packet_link"));
     await (0, store_js_1.setSetting)("inquiry_form_link", text("inquiry_form_link"));
+    await (0, store_js_1.setSetting)("origin_question_text", String(req.body.origin_question_text || "").trim());
     await (0, store_js_1.setSetting)("inquiry_form_text", String(req.body.inquiry_form_text || "").trim());
     await (0, store_js_1.setSetting)("inquiry_form_text_tour", String(req.body.inquiry_form_text_tour || "").trim());
     await (0, store_js_1.setSetting)("reply_min_words", num("reply_min_words", 30));

@@ -66,3 +66,42 @@ export const ORIGIN_LABEL: Record<string, string> = {
   weddingpro: "The Knot / WeddingWire (WeddingPro) inquiry",
   zola: "Zola inquiry",
 };
+
+// ─────────────────────────── "How'd you come across us?" ───────────────────────────
+// The first reply to an event prospect ends with this question unless we already know how they found
+// us. The wording is fixed (editable in settings) and added in code as the last paragraph before the
+// sign-off. When the guest answers, the answer is written on their Tripleseat lead.
+
+export const DEFAULT_ORIGIN_TEXT = "One last thing. How'd you come across us? A friend, a scroll, or a detour down Highway 1?";
+
+export async function originQuestionText(): Promise<string> {
+  // A saved blank switches the question off.
+  return (await getSetting("origin_question_text", DEFAULT_ORIGIN_TEXT)).trim();
+}
+
+export const ORIGIN_CATEGORIES = ["friend_or_family", "social_media", "web_search", "the_knot", "weddingwire", "zola", "drove_by", "planner_or_vendor", "past_guest", "press", "other"] as const;
+
+/** The Tripleseat Lead Source each answer maps to (names as they appear in Tripleseat's Lead Source list). */
+export const ORIGIN_LEAD_SOURCE: Record<string, string> = {
+  friend_or_family: "Referral Client",
+  planner_or_vendor: "Referral Industry",
+  social_media: "Instagram",
+  drove_by: "Walk-in",
+  past_guest: "Repeat",
+  the_knot: "The Knot",
+  weddingwire: "Wedding Wire",
+  zola: "Zola",
+  web_search: "Other",
+  press: "Other",
+  other: "Other",
+};
+
+/** Has this guest already told us how they found us (on an earlier message)? */
+export async function priorOriginAnswer(guestEmail: string): Promise<string> {
+  if (!guestEmail) return "";
+  const row = await query<{ origin_answer: string }>(
+    `SELECT origin_answer FROM agent_messages WHERE origin_answer IS NOT NULL AND LOWER(guest_email) = LOWER($1) ORDER BY id DESC LIMIT 1`,
+    [guestEmail]
+  );
+  return row[0]?.origin_answer || "";
+}
