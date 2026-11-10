@@ -11,6 +11,7 @@ const kb_js_1 = require("./kb.js");
 const voice_js_1 = require("./voice.js");
 const llm_js_1 = require("./llm.js");
 const ts_context_js_1 = require("./ts-context.js");
+const checks_js_1 = require("./checks.js");
 const store_js_1 = require("./store.js");
 const db_js_1 = require("../db.js");
 const TRIAGE_SCHEMA = {
@@ -62,48 +63,57 @@ const DRAFT_SCHEMA = {
     },
     required: ["reply_subject", "reply_text", "kb_ids_used", "open_questions", "confidence"],
 };
-async function compose(intake, t, guest, avail, priorReplies) {
+const QUESTION_BY_DATE_STATE = {
+    open: "When do you hope to decide on a venue?",
+    taken: "How flexible is your date?",
+    none: "When do you expect to set a date?",
+    unknown: "How flexible is your date?",
+};
+function planBlock(plan, facts) {
+    const lines = [];
+    if (plan.stage !== "prospect") {
+        lines.push(`Guest stage: ${plan.stage === "booked" ? "booked client" : "general guest (not an event prospect)"}.`);
+        lines.push("A question is optional: at most one, and only if you need the answer to help them. No tour P.S.");
+        return lines.join("\n");
+    }
+    lines.push("Guest stage: prospect (has not booked).");
+    if (facts.state === "open")
+        lines.push("Date state: OPEN.");
+    else if (facts.state === "taken")
+        lines.push(facts.alternatives.length
+            ? `Date state: TAKEN. Name these open alternatives in the paragraph above the question: ${facts.alternatives.map(ts_context_js_1.longDate).join("; ")}.`
+            : "Date state: TAKEN. No open alternative was found nearby, so say the team will send the closest open dates.");
+    else if (facts.state === "none")
+        lines.push("Date state: NO DATE GIVEN.");
+    else
+        lines.push("Date state: COULD NOT BE CHECKED. Say the team will confirm availability.");
+    lines.push(`The one question, as its own final paragraph before the sign-off: "${plan.question}" A close variation is fine. ` +
+        `If an earlier reply on this thread already asked it, ask the next easiest question instead.`);
+    if (plan.guestAskedTour)
+        lines.push("The guest asked about visiting, so answer that in the body. No P.S.");
+    else if (plan.tourPs)
+        lines.push(`P.S.: after the sign-off, add the tour invitation as a statement. ` +
+            (plan.tourLink ? `Scheduling link to include: ${plan.tourLink}` : "No scheduling link is set, so invite them to send a day and time after 12:00 pm."));
+    else
+        lines.push(`P.S.: none (${plan.tourPsReason}).`);
+    return lines.join("\n");
+}
+async function compose(intake, t, guest, facts, priorReplies, plan, feedback = "") {
     const kb = await (0, kb_js_1.loadKb)();
     const { approved, unanswered } = (0, kb_js_1.kbPromptBlock)(kb);
     const houseRules = await (0, store_js_1.getSetting)("house_rules", "");
     const voice = await (0, voice_js_1.voiceGuide)();
     return (0, llm_js_1.callJson)({
         system: `${voice}\n\nHOUSE RULES (internal policy; follow them, do not quote them verbatim; where a house rule and an approved answer disagree, the house rule wins)\n${houseRules || "(none set)"}\n\nAPPROVED ANSWERS (the only source of facts besides house rules and live Tripleseat context)\n${approved}\n\nKNOWN QUESTIONS WITHOUT AN APPROVED ANSWER (do not answer these yourself; say the team will confirm)\n${unanswered}`,
-        user: `Write the reply to this ${t.department} inquiry. Today is ${todayLA()}.\n\nSOURCE: ${intake.source}\nGUEST: ${t.guest_first_name} ${t.guest_last_name}\nSUBJECT: ${intake.subject}\nTOPICS: ${t.topics.join(", ")}\nQUESTIONS (answer all, in order):\n${t.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n\nLIVE TRIPLESEAT CONTEXT\n${guest.summary}\n${avail ? `Date availability:\n${avail}` : "No specific date requested."}\n\nOUR EARLIER REPLIES ON THIS THREAD (do not repeat them)\n${priorReplies || "(none)"}\n\nGUEST MESSAGE\n${intake.text}`,
+        user: `Write the reply to this ${t.department} inquiry. Today is ${todayLA()}.\n\nSOURCE: ${intake.source}\nGUEST: ${t.guest_first_name} ${t.guest_last_name}\nSUBJECT: ${intake.subject}\nTOPICS: ${t.topics.join(", ")}\nQUESTIONS (answer all, in order):\n${t.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n\n` +
+            `LIVE TRIPLESEAT CONTEXT\n${guest.summary}\n${facts.text ? `Date availability:\n${facts.text}` : "No specific date requested."}\n\n` +
+            `REPLY PLAN\n${planBlock(plan, facts)}\n\n` +
+            `OUR EARLIER REPLIES ON THIS THREAD (do not repeat them)\n${priorReplies || "(none)"}\n\nGUEST MESSAGE\n${intake.text}` +
+            (feedback
+                ? `\n\nYOUR PREVIOUS DRAFT FAILED THESE CHECKS. Write the reply again so that each one passes, keeping every supported fact:\n${feedback}`
+                : ""),
         toolName: "draft_reply",
         schema: DRAFT_SCHEMA,
-        maxTokens: 2000,
-    });
-}
-function codeChecks(text, approvedAnswers) {
-    const problems = voice_js_1.BANNED_PATTERNS.filter((p) => p.re.test(text)).map((p) => p.why);
-    problems.push(...(0, voice_js_1.discountProblems)(text, approvedAnswers));
-    if (text.length < 60)
-        problems.push("reply is too short");
-    if (text.length > 2600)
-        problems.push("reply is too long");
-    if (!/The Village Events Team/.test(text))
-        problems.push("missing sign-off");
-    return problems;
-}
-async function review(intake, draft, avail) {
-    const kb = await (0, kb_js_1.loadKb)();
-    const { approved } = (0, kb_js_1.kbPromptBlock)(kb);
-    const houseRules = await (0, store_js_1.getSetting)("house_rules", "");
-    return (0, llm_js_1.callJson)({
-        model: config_js_1.agentConfig.reviewModel,
-        system: `You are the final check before an email goes to a guest of The Village Big Sur with no human review.\nFail the draft (pass=false) if ANY of these is true:\n- it states a price, fee, capacity, time, date, policy, vendor or availability that is not supported by the approved answers, house rules or availability lines below;\n- it promises or confirms anything a person must decide (a booking, a contract change, a discount, a hold longer than 7 days);\n- it leaves a guest question unanswered without saying the team will confirm it;\n- it is rude, cold, overly salesy, or breaks the voice rules.\nIf the problems are fixable by deleting or softening wording, return corrected_reply with the fix and pass=true. Otherwise pass=false and corrected_reply empty.\n\nAPPROVED ANSWERS\n${approved}\n\nHOUSE RULES\n${houseRules}\n\nAVAILABILITY\n${avail || "(none)"}`,
-        user: `GUEST MESSAGE\n${intake.text}\n\nDRAFT REPLY\n${draft.reply_text}`,
-        toolName: "review",
-        schema: {
-            type: "object",
-            properties: {
-                pass: { type: "boolean" },
-                problems: { type: "array", items: { type: "string" } },
-                corrected_reply: { type: "string" },
-            },
-            required: ["pass", "problems", "corrected_reply"],
-        },
         maxTokens: 2000,
     });
 }
@@ -234,21 +244,74 @@ async function handle(rowId, mailbox, m, sendsLeft) {
         if (prior.todayCount >= config_js_1.agentConfig.maxRepliesPerThreadPerDay) {
             return escalate(rowId, intake, `Agent already replied ${prior.todayCount} times on this thread in 24 hours (loop guard).`);
         }
-        const avail = t.requested_dates.length ? await (0, ts_context_js_1.availability)(t.requested_dates) : "";
-        const draft = await compose(intake, t, guest, avail, prior.text);
-        const approvedText = (0, kb_js_1.kbPromptBlock)(await (0, kb_js_1.loadKb)()).approved;
-        let finalText = draft.reply_text;
-        let problems = codeChecks(finalText, approvedText);
-        const rv = await review(intake, { ...draft, reply_text: finalText }, avail);
-        if (!rv.pass)
-            problems = problems.concat(rv.problems);
-        else if (rv.corrected_reply?.trim()) {
-            finalText = rv.corrected_reply.trim();
-            problems = codeChecks(finalText, approvedText);
+        const facts = await (0, ts_context_js_1.dateFacts)(t.requested_dates, todayLA());
+        // Decide in code how the reply ends: one question picked by date state, tour invitation in a P.S.
+        const prospect = isEvent && guest.stage !== "booked";
+        const guestAskedTour = checks_js_1.GUEST_TOUR_RE.test(intake.text) || t.topics.some((x) => /tour|visit/i.test(x));
+        const alreadyInvited = /p\.?\s?s\.?\b|\btour\b|show the property/i.test(prior.text);
+        const plan = {
+            stage: prospect ? "prospect" : guest.stage === "booked" ? "booked" : "general",
+            question: QUESTION_BY_DATE_STATE[facts.state],
+            tourPs: prospect && !guestAskedTour && !alreadyInvited,
+            tourPsReason: alreadyInvited ? "an earlier reply already invited them" : "not a prospect",
+            tourLink: (await (0, store_js_1.getSetting)("tour_link", "")).trim(),
+            guestAskedTour,
+        };
+        let draft = await compose(intake, t, guest, facts, prior.text, plan);
+        // Voice: when Patrick's own replies are loaded, write a second draft and keep whichever reads
+        // more like them. The pick is recorded so it can be compared with Patrick's own pick.
+        const exemplars = (await (0, store_js_1.getSetting)("voice_pairwise", "on")) === "on" ? await (0, checks_js_1.loadExemplars)(5).catch(() => []) : [];
+        if (exemplars.length >= 3) {
+            const second = await compose(intake, t, guest, facts, prior.text, plan);
+            const flip = Math.random() < 0.5; // hide which draft came first from the judge
+            const v = await (0, checks_js_1.pickCloserVoice)(flip ? second.reply_text : draft.reply_text, flip ? draft.reply_text : second.reply_text, exemplars);
+            const secondWon = (v.pick === "A") === flip;
+            const loser = secondWon ? draft : second;
+            if (secondWon)
+                draft = second;
+            await (0, db_js_1.query)(`UPDATE agent_messages SET alt_reply_text=$2, voice_pick_reason=$3, voice_exemplar_ids=$4 WHERE id=$1`, [
+                rowId, loser.reply_text, v.reason, exemplars.map((e) => e.id),
+            ]);
         }
-        await (0, db_js_1.query)(`UPDATE agent_messages SET reply_text=$2, reply_subject=$3, open_questions=$4, review_notes=$5 WHERE id=$1`, [rowId, finalText, draft.reply_subject, draft.open_questions, [...rv.problems, `confidence: ${draft.confidence}`].join(" | ")]);
-        if (problems.length || draft.confidence === "low") {
-            return escalate(rowId, intake, `Failed final check: ${problems.join("; ") || "low confidence"}`, finalText);
+        // Yes/no checks. One automatic rewrite if a gating check fails, then a person.
+        const kbNow = (0, kb_js_1.kbPromptBlock)(await (0, kb_js_1.loadKb)());
+        const ctx = {
+            rowId,
+            guestText: intake.text,
+            guestEmail: t.guest_email || lookupKey,
+            questions: t.questions,
+            tsSummary: guest.summary,
+            availability: facts.text,
+            approved: kbNow.approved,
+            houseRules: await (0, store_js_1.getSetting)("house_rules", ""),
+            corrections: await (0, voice_js_1.activeCorrections)(),
+            prospect,
+            guestAskedTour,
+        };
+        let results = await (0, checks_js_1.runChecks)(draft.reply_text, ctx);
+        await (0, checks_js_1.saveCheckResults)(rowId, 1, results);
+        let attempts = 1;
+        if ((0, checks_js_1.gateFailures)(results).length) {
+            draft = await compose(intake, t, guest, facts, prior.text, plan, (0, checks_js_1.describeFailures)((0, checks_js_1.gateFailures)(results)));
+            results = await (0, checks_js_1.runChecks)(draft.reply_text, ctx);
+            await (0, checks_js_1.saveCheckResults)(rowId, 2, results);
+            attempts = 2;
+        }
+        const finalText = draft.reply_text;
+        const failed = (0, checks_js_1.gateFailures)(results);
+        const reported = results.filter((r) => !r.pass && r.mode === "report");
+        await (0, db_js_1.query)(`UPDATE agent_messages SET reply_text=$2, reply_subject=$3, open_questions=$4, review_notes=$5, check_attempts=$6 WHERE id=$1`, [
+            rowId, finalText, draft.reply_subject, draft.open_questions,
+            [
+                `checks: ${results.filter((r) => r.pass).length}/${results.length} passed${attempts > 1 ? " after one rewrite" : ""}`,
+                failed.length ? `blocking: ${failed.map((r) => r.id).join(", ")}` : "",
+                reported.length ? `noted: ${reported.map((r) => r.id).join(", ")}` : "",
+                `confidence: ${draft.confidence}`,
+            ].filter(Boolean).join(" | "),
+            attempts,
+        ]);
+        if (failed.length || draft.confidence === "low") {
+            return escalate(rowId, intake, failed.length ? `Failed checks after one rewrite:\n${(0, checks_js_1.describeFailures)(failed)}` : "Low confidence", finalText);
         }
         const transport = fromTs ? "tripleseat_relay" : "email_from_events";
         const closeWaiting = async (action) => {

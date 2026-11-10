@@ -11,6 +11,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BANNED_PATTERNS = exports.DEFAULT_VOICE_GUIDE = void 0;
 exports.voiceGuide = voiceGuide;
+exports.activeCorrections = activeCorrections;
 exports.discountProblems = discountProblems;
 const db_js_1 = require("../db.js");
 const store_js_1 = require("./store.js");
@@ -32,11 +33,27 @@ HOW AN ANSWER IS BUILT
    Example pattern: no X, but here is Y.
 5. Answer every question the guest asked, in the order they asked. Short paragraphs, 2-3 sentences each.
    No bullet lists unless the guest asked for a list of options. Typical length: 80-180 words.
-6. Ask at most one or two forward-moving questions (how flexible is your date, guest count, would you
-   like to come see it in person). Patrick's habit: ask how flexible the date is.
-7. Close by inviting the next step (a tour any time after 12:00 pm, a call, a hold) and end with a
-   variation of "Feel free to hit us back with any other questions." Then sign off:
-   "Warmly,\\nThe Village Events Team".
+6. One question per reply. End the body with exactly one question, as a short paragraph of its own,
+   placed immediately before the sign-off, because a reply that ends on one easy question gets answered.
+   The REPLY PLAN in the prompt gives the date state and the question that fits it:
+     date open     -> ask when they hope to decide on a venue;
+     date taken    -> name the two open alternatives in the paragraph above, then ask how flexible their date is;
+     no date given -> ask when they expect to set one.
+   Anything else you would like to know goes in as a statement ("send over your guest count and we will
+   put a quote together"), never as a second question. If an earlier reply on the thread already asked
+   that question, ask the next easiest one instead (guest count, or which package they are leaning toward).
+   For booked couples and for restaurant, Bodega and yoga questions a question is optional: ask one only
+   when you need the answer to help them, and never more than one.
+7. Nothing follows the question except the sign-off. Do not add a closer after it. Use a variation of
+   "Feel free to hit us back with any other questions." only in a reply that has no question.
+8. Sign off:
+   "Warmly,\nThe Village Events Team".
+9. Tours go in a P.S. For a couple or planner who has not booked, add one P.S. line after the sign-off
+   inviting a visit: we show the property any day after 12:00 pm, with the scheduling link when the
+   REPLY PLAN gives one. The P.S. is a statement, never a question, and nothing follows it. Leave it out
+   when the REPLY PLAN says so (an earlier reply already made the invitation, or the guest has booked).
+   If the guest asked about visiting, answer that in the body as one of their questions; the P.S. is
+   then not needed.
 
 WORDS
 - Use: we, our team, happy to, the gallery lawn, the sycamore grove, the river, Solstice, the Bodega,
@@ -55,7 +72,7 @@ WHAT YOU NEVER DO
 - Never confirm a booking, a hold beyond the approved 7-day courtesy hold, or a contract change.
 - Never discuss other couples' events by name.
 - Never mention that you are automated unless the guest asks directly; if asked, say plainly that
-  replies are drafted by an AI assistant and reviewed by our events team.
+  this reply was written by The Village's AI assistant and is copied to our events team.
 `.trim();
 async function voiceGuide() {
     const custom = await (0, store_js_1.getSetting)("voice_guide", "");
@@ -74,7 +91,11 @@ async function voiceGuide() {
         .join("\n");
     return `${base}\n\nCORRECTIONS FROM PATRICK (these override anything above)\n${corrections}`;
 }
-/** Words and phrases that must never appear in a guest reply. Checked in code, not just by the model. */
+/** Patrick's active corrections as a numbered list, for the checks. */
+async function activeCorrections() {
+    const rules = await (0, db_js_1.query)(`SELECT rule FROM agent_voice_rules WHERE active ORDER BY id`);
+    return rules.map((r, i) => `${i + 1}. ${r.rule}`).join("\n");
+}
 /**
  * Discount language is allowed only when the same offer appears in an approved FAQ answer
  * (e.g. the 5% prepayment discount). Anything else is treated as an unpublished discount.
@@ -84,6 +105,7 @@ function discountProblems(text, approvedAnswers) {
     const kb = approvedAnswers.toLowerCase();
     return found.filter((f) => !kb.includes(f.toLowerCase())).map((f) => `mentions an unapproved discount ("${f}")`);
 }
+/** Words and phrases that must never appear in a guest reply. Checked in code, not just by the model. */
 exports.BANNED_PATTERNS = [
     { re: /\bcancel+ation/i, why: 'uses the word "cancellation"' },
     { re: /\bapartments?\b/i, why: 'uses "apartment"' },

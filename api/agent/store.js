@@ -76,6 +76,60 @@ async function migrateAgent() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+    // One verdict per check per attempt for every reply the agent wrote
+    await (0, db_js_1.query)(`
+    CREATE TABLE IF NOT EXISTS agent_check_results (
+      message_id INTEGER NOT NULL REFERENCES agent_messages(id) ON DELETE CASCADE,
+      attempt INTEGER NOT NULL DEFAULT 1,
+      check_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      pass BOOLEAN NOT NULL,
+      evidence TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (message_id, attempt, check_id)
+    )
+  `);
+    // Patrick's own pass/fail label for a check on a reply; used to validate each automated check
+    await (0, db_js_1.query)(`
+    CREATE TABLE IF NOT EXISTS agent_check_labels (
+      message_id INTEGER NOT NULL REFERENCES agent_messages(id) ON DELETE CASCADE,
+      check_id TEXT NOT NULL,
+      owner_pass BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (message_id, check_id)
+    )
+  `);
+    // Patrick's own replies, used as the reference for voice
+    await (0, db_js_1.query)(`
+    CREATE TABLE IF NOT EXISTS agent_exemplars (
+      id SERIAL PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'outlook',
+      source_ref TEXT,
+      sent_at TIMESTAMPTZ,
+      recipient_type TEXT,
+      event_type TEXT,
+      situation_tags TEXT[] DEFAULT '{}',
+      inquiry_text TEXT,
+      reply_text TEXT NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (source, source_ref)
+    )
+  `);
+    // Second draft and voice comparison; owner review fields
+    for (const col of [
+        "alt_reply_text TEXT",
+        "voice_pick_reason TEXT",
+        "voice_exemplar_ids INTEGER[]",
+        "owner_voice_pick TEXT",
+        "owner_sent_unchanged BOOLEAN",
+        "owner_critique TEXT",
+        "owner_labelled_at TIMESTAMPTZ",
+        "check_attempts INTEGER DEFAULT 0",
+    ]) {
+        await (0, db_js_1.query)(`ALTER TABLE agent_messages ADD COLUMN IF NOT EXISTS ${col}`);
+    }
     // Graph delta links per mailbox
     await (0, db_js_1.query)(`
     CREATE TABLE IF NOT EXISTS agent_cursors (

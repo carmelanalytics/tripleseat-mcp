@@ -17,6 +17,14 @@ async function sendDigest() {
     const waiting = by("awaiting_ts");
     const sent = by("sent"), drafted = by("drafted"), escalated = by("escalated"), errored = by("error"), ignored = by("ignored");
     const base = process.env.PUBLIC_BASE_URL || "";
+    const failing = await (0, db_js_1.query)(`
+    WITH latest AS (
+      SELECT DISTINCT ON (message_id, check_id) message_id, check_id, pass, created_at
+      FROM agent_check_results ORDER BY message_id, check_id, attempt DESC
+    )
+    SELECT check_id, COUNT(*)::int AS n FROM latest
+    WHERE NOT pass AND created_at > NOW() - INTERVAL '24 hours' GROUP BY check_id ORDER BY n DESC LIMIT 6`).catch(() => []);
+    const toLabel = rows.filter((r) => r.reply_text && !r.owner_labelled_at).length;
     const openQs = rows.flatMap((r) => (r.open_questions || []).map((q) => ({ q, r })));
     const card = (r) => `
 <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin:10px 0">
@@ -31,6 +39,7 @@ async function sendDigest() {
 <div style="font-family:Arial,sans-serif;max-width:760px">
 <h2>Inquiry agent: last 24 hours</h2>
 <p>Mode: <b>${config_js_1.agentConfig.mode}</b> &middot; Sent ${sent.length} &middot; Drafted (not sent) ${drafted.length} &middot; Handed to a person ${escalated.length} &middot; Errors ${errored.length} &middot; Waiting for a Tripleseat thread ${waiting.length} &middot; Not inquiries ${ignored.length}</p>
+<p>Checks failed most often: ${failing.length ? failing.map((f) => `${esc(f.check_id)} (${f.n})`).join(", ") : "none"}. Replies waiting for your pass/fail labels: ${toLabel} &middot; <a href="${base}/admin/agent/checks">check statistics</a></p>
 ${openQs.length ? `<h3>Questions the agent could not answer (add these to the FAQ sheet)</h3><ul>${openQs.map((o) => `<li>${esc(o.q)} <span style="color:#666">(${esc(o.r.guest_name || o.r.from_address)})</span></li>`).join("")}</ul>` : ""}
 ${escalated.length ? `<h3>Handed to a person</h3>${escalated.map(card).join("")}` : ""}
 ${sent.length ? `<h3>Sent</h3>${sent.map(card).join("")}` : ""}

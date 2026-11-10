@@ -79,25 +79,83 @@ export async function guestFromIds(ids: { leadId?: string; eventId?: string }): 
   return null;
 }
 
-/** Availability facts for each requested date (YYYY-MM-DD). */
-export async function availability(dates: string[]): Promise<string> {
-  const lines: string[] = [];
-  for (const d of dates.slice(0, 4)) {
-    try {
-      const day = formatDate(d + "T12:00:00");
-      const params: Record<string, string> = { event_start_date: day, event_end_date: day };
-      if (agentConfig.tripleseatLocationId) params.location_id = agentConfig.tripleseatLocationId;
-      const ev = rows((await tripleseatGet("/events/search", params)).data);
-      const firm = ev.filter((e: any) => /definite|closed/i.test(String(e.status || "")));
-      const holds = ev.filter((e: any) => /tentative|prospect/i.test(String(e.status || "")));
-      if (firm.length) lines.push(`${d}: BOOKED (a confirmed event is on this date). Not available.`);
-      else if (holds.length) lines.push(`${d}: ON HOLD for another couple. Can offer a second-position (backup) hold or nearby dates.`);
-      else lines.push(`${d}: OPEN in Tripleseat as of today. Not reserved until a contract and deposit are in.`);
-    } catch (err: any) {
-      lines.push(`${d}: could not check (${err.message.slice(0, 80)}). Say the team will confirm availability.`);
-    }
+export type DateState = "open" | "taken" | "none" | "unknown";
+type DayStatus = "open" | "hold" | "booked" | "unknown";
+
+async function dayStatus(d: string): Promise<DayStatus> {
+  try {
+    const day = formatDate(d + "T12:00:00");
+    const params: Record<string, string> = { event_start_date: day, event_end_date: day };
+    if (agentConfig.tripleseatLocationId) params.location_id = agentConfig.tripleseatLocationId;
+    const ev = rows((await tripleseatGet("/events/search", params)).data);
+    if (ev.some((e: any) => /definite|closed/i.test(String(e.status || "")))) return "booked";
+    if (ev.some((e: any) => /tentative|prospect/i.test(String(e.status || "")))) return "hold";
+    return "open";
+  } catch {
+    return "unknown";
   }
-  return lines.join("\n");
+}
+
+function shiftDate(d: string, days: number): string {
+  const t = new Date(d + "T12:00:00Z");
+  t.setUTCDate(t.getUTCDate() + days);
+  return t.toISOString().slice(0, 10);
+}
+
+/** "Saturday, October 3, 2026" */
+export function longDate(d: string): string {
+  return new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(
+    new Date(d + "T12:00:00Z")
+  );
+}
+
+export interface DateFacts {
+  /** Lines for the prompt and the checks: the only availability facts a reply may state. */
+  text: string;
+  /** open = at least one requested date is open; taken = every requested date is booked or on hold. */
+  state: DateState;
+  /** Up to two open dates near the first requested date (only when state is "taken"). */
+  alternatives: string[];
+}
+
+/**
+ * Availability for the requested dates (YYYY-MM-DD). When every requested date is taken, looks for
+ * the two nearest open dates: the same weekday in the weeks either side first, then adjacent days.
+ */
+export async function dateFacts(dates: string[], today: string): Promise<DateFacts> {
+  const asked = dates.slice(0, 4);
+  if (!asked.length) return { text: "", state: "none", alternatives: [] };
+
+  const lines: string[] = [];
+  const statuses: DayStatus[] = [];
+  for (const d of asked) {
+    const st = await dayStatus(d);
+    statuses.push(st);
+    if (st === "booked") lines.push(`${d} (${longDate(d)}): BOOKED (a confirmed event is on this date). Not available.`);
+    else if (st === "hold") lines.push(`${d} (${longDate(d)}): ON HOLD for another couple. Can offer a second-position (backup) hold or nearby dates.`);
+    else if (st === "open") lines.push(`${d} (${longDate(d)}): OPEN in Tripleseat as of today. Not reserved until a contract and deposit are in.`);
+    else lines.push(`${d} (${longDate(d)}): could not be checked. Say the team will confirm availability.`);
+  }
+
+  if (statuses.includes("open")) return { text: lines.join("\n"), state: "open", alternatives: [] };
+  if (statuses.every((s) => s === "unknown")) return { text: lines.join("\n"), state: "unknown", alternatives: [] };
+
+  const alternatives: string[] = [];
+  let lookups = 0;
+  for (const off of [7, -7, 14, -14, 1, -1, 21, -21, 2, -2]) {
+    if (alternatives.length >= 2 || lookups >= 8) break;
+    const cand = shiftDate(asked[0], off);
+    if (cand <= today || asked.includes(cand)) continue;
+    lookups++;
+    if ((await dayStatus(cand)) === "open") alternatives.push(cand);
+  }
+  alternatives.sort();
+  lines.push(
+    alternatives.length
+      ? `Open alternatives near ${asked[0]}: ${alternatives.map((d) => `${d} (${longDate(d)})`).join("; ")}. Open in Tripleseat as of today.`
+      : `No open alternative was found near ${asked[0]}. Say the team will send the closest open dates.`
+  );
+  return { text: lines.join("\n"), state: "taken", alternatives };
 }
 
 /** Create a Tripleseat lead for a marketplace or direct inquiry. */
