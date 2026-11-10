@@ -22,9 +22,17 @@ export function answerKeyValid(id: number, key: string): boolean {
   return crypto.timingSafeEqual(Buffer.from(want), Buffer.from(key));
 }
 
+/** Where this deployment is reached from an email link. */
+export function baseUrl(): string {
+  const set = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  if (set) return set;
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL || "";
+  return vercel ? `https://${vercel}` : "";
+}
+
 /** Link to the answer page, or to the signed-in message page when no link secret is set. */
 export function answerLink(id: number, answer: "yes" | "no"): string {
-  const base = process.env.PUBLIC_BASE_URL || "";
+  const base = baseUrl();
   const k = answerKey(id);
   return k ? `${base}/agent/answer/${id}?k=${k}&a=${answer}` : `${base}/admin/agent/message/${id}`;
 }

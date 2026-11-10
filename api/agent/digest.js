@@ -6,6 +6,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendDigest = sendDigest;
 const config_js_1 = require("./config.js");
+const links_js_1 = require("./links.js");
 const graph_js_1 = require("./graph.js");
 const db_js_1 = require("../db.js");
 function esc(s) {
@@ -16,7 +17,7 @@ async function sendDigest() {
     const by = (a) => rows.filter((r) => r.action === a);
     const waiting = by("awaiting_ts");
     const sent = by("sent"), drafted = by("drafted"), escalated = by("escalated"), errored = by("error"), ignored = by("ignored");
-    const base = process.env.PUBLIC_BASE_URL || "";
+    const base = (0, links_js_1.baseUrl)();
     const failing = await (0, db_js_1.query)(`
     WITH latest AS (
       SELECT DISTINCT ON (message_id, check_id) message_id, check_id, pass, created_at

@@ -4,6 +4,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PACKET_RE = void 0;
+exports.staffQuoted = staffQuoted;
 exports.runPoll = runPoll;
 const config_js_1 = require("./config.js");
 const graph_js_1 = require("./graph.js");
@@ -156,6 +157,13 @@ async function compose(intake, t, guest, facts, threadBrief, plan, examples, fee
 function todayLA() {
     return new Intl.DateTimeFormat("en-CA", { timeZone: config_js_1.agentConfig.timezone }).format(new Date());
 }
+/** True when the email quotes an earlier reply written from a Village or Orosco Group address. */
+function staffQuoted(body) {
+    // Strip HTML tags but keep addresses written in angle brackets (<name@example.com>).
+    const text = body.replace(/<\/?[a-zA-Z][^>@]*>/g, " ").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&nbsp;/gi, " ");
+    return (/@(thevillagebigsur|oroscogroup)\.com\s*>?[^\n]{0,60}\bwrote:/i.test(text) ||
+        /\bFrom:\s[^\n]{0,160}@(thevillagebigsur|oroscogroup)\.com/i.test(text));
+}
 function nameFromTripleseatSubject(subject) {
     const m = subject.match(/^(.+?)\s+sent you a new message/i);
     return m ? m[1].trim() : "";
@@ -205,7 +213,7 @@ async function sendCopy(rowId, intake, reply, sent, to_guest = "") {
     const to = (process.env.AGENT_COPY_TO || "patrick@thevillagebigsur.com").split(",").map((s) => s.trim()).filter(Boolean);
     if (!to.length)
         return;
-    const base = process.env.PUBLIC_BASE_URL || "";
+    const base = (0, links_js_1.baseUrl)();
     const btn = (href, label, bg) => `<a href="${href}" style="display:inline-block;padding:10px 18px;margin-right:10px;background:${bg};color:#ffffff;text-decoration:none;border-radius:4px;font-weight:bold">${label}</a>`;
     const html = `<p><b>${sent ? "Sent automatically" : "Draft only. Nothing was sent to the guest."}</b> (${esc(intake.source)}${to_guest ? `, to ${esc(to_guest)}` : ""})</p>
 <p><b>Guest wrote:</b></p><pre style="white-space:pre-wrap;font-family:inherit;background:#f6f6f6;padding:10px">${esc(intake.text)}</pre>
@@ -284,6 +292,17 @@ async function handle(rowId, mailbox, m, sendsLeft) {
             `What they asked:\n${t.questions.map((q, i) => `${i + 1}. ${q}`).join("\n") || "(no specific question)"}`;
         if (t.escalate)
             return escalate(rowId, intake, t.escalate_reason, undefined, handoffBrief);
+        // A direct email thread that a person at The Village has already answered stays with that person.
+        // (A guest answering one of the agent's own emails also quotes a Village address, so the agent's
+        // log is checked first.)
+        if (intake.source === "direct" && staffQuoted(m.body?.content || "")) {
+            const ours = await (0, db_js_1.queryOne)(`SELECT COUNT(*)::int AS n FROM agent_messages
+         WHERE id <> $1 AND action = 'sent' AND (($2 <> '' AND conversation_id = $2) OR ($3 <> '' AND LOWER(guest_email) = LOWER($3)))`, [rowId, m.conversationId || "", t.guest_email || lookupKey]);
+            if (!ours?.n) {
+                await (0, db_js_1.query)(`UPDATE agent_messages SET action='ignored', review_notes=$2 WHERE id=$1`, [rowId, "A person at The Village has already replied on this email thread, so the agent left it with them."]);
+                return;
+            }
+        }
         // A lead that began outside Tripleseat (we invited the guest to the form) gets its origin written on it.
         if (fromTs && guest.leadId && t.guest_email && config_js_1.agentConfig.mode === "live") {
             const began = await (0, db_js_1.query)(`SELECT id, source, mailbox, created_at FROM agent_messages

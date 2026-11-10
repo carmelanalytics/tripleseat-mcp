@@ -10,6 +10,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.answerKey = answerKey;
 exports.answerKeyValid = answerKeyValid;
+exports.baseUrl = baseUrl;
 exports.answerLink = answerLink;
 const crypto_1 = __importDefault(require("crypto"));
 const config_js_1 = require("./config.js");
@@ -26,9 +27,17 @@ function answerKeyValid(id, key) {
         return false;
     return crypto_1.default.timingSafeEqual(Buffer.from(want), Buffer.from(key));
 }
+/** Where this deployment is reached from an email link. */
+function baseUrl() {
+    const set = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+    if (set)
+        return set;
+    const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL || "";
+    return vercel ? `https://${vercel}` : "";
+}
 /** Link to the answer page, or to the signed-in message page when no link secret is set. */
 function answerLink(id, answer) {
-    const base = process.env.PUBLIC_BASE_URL || "";
+    const base = baseUrl();
     const k = answerKey(id);
     return k ? `${base}/agent/answer/${id}?k=${k}&a=${answer}` : `${base}/admin/agent/message/${id}`;
 }

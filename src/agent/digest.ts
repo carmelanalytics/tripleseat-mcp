@@ -4,6 +4,7 @@
  */
 
 import { agentConfig } from "./config.js";
+import { baseUrl } from "./links.js";
 import { sendInternal } from "./graph.js";
 import { query } from "../db.js";
 import type { AgentMessageRow } from "./store.js";
@@ -19,7 +20,7 @@ export async function sendDigest(): Promise<{ count: number }> {
   const by = (a: string) => rows.filter((r) => r.action === a);
   const waiting = by("awaiting_ts");
   const sent = by("sent"), drafted = by("drafted"), escalated = by("escalated"), errored = by("error"), ignored = by("ignored");
-  const base = process.env.PUBLIC_BASE_URL || "";
+  const base = baseUrl();
   const failing = await query<{ check_id: string; n: number }>(`
     WITH latest AS (
       SELECT DISTINCT ON (message_id, check_id) message_id, check_id, pass, created_at
