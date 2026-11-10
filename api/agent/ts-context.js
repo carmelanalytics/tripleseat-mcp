@@ -9,7 +9,8 @@ exports.guestFromIds = guestFromIds;
 exports.longDate = longDate;
 exports.dateFacts = dateFacts;
 exports.createLead = createLead;
-exports.logToTripleseat = logToTripleseat;
+exports.followUpTask = followUpTask;
+exports.originNote = originNote;
 const tripleseat_js_1 = require("../tripleseat.js");
 const config_js_1 = require("./config.js");
 function rows(data) {
@@ -170,10 +171,10 @@ async function createLead(input) {
     return String(data?.lead?.id || data?.id || "") || undefined;
 }
 /**
- * Put a copy of a sent reply on the Tripleseat record as a completed-style task, so replies that
- * travel outside a Tripleseat discussion are still on the record.
+ * When a reply tells a guest that the team will confirm something, put a task on the Tripleseat lead
+ * so the promise has an owner.
  */
-async function logToTripleseat(rec, body) {
+async function followUpTask(rec, body) {
     const siteId = Number(process.env.TRIPLESEAT_SITE_ID || 0);
     const taskTypeId = Number(process.env.TRIPLESEAT_TASK_TYPE_ID || 0);
     const assignees = (process.env.TRIPLESEAT_TASK_ASSIGNEE_IDS || "")
@@ -190,4 +191,22 @@ async function logToTripleseat(rec, body) {
         assignee_ids: assignees,
         site_id: siteId,
     });
+}
+/**
+ * Write where an inquiry began on its Tripleseat lead ("ORIGIN: ..."). Tripleseat has accepted more
+ * than one field name for a note's text, so try each in turn.
+ */
+async function originNote(leadId, text) {
+    const shapes = [{ note: { body: text } }, { note: { content: text } }, { note: { note: text } }];
+    let lastErr;
+    for (const body of shapes) {
+        try {
+            await (0, tripleseat_js_1.tripleseatPost)(`/leads/${leadId}/notes`, body);
+            return;
+        }
+        catch (e) {
+            lastErr = e;
+        }
+    }
+    throw lastErr;
 }

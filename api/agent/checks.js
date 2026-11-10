@@ -28,19 +28,24 @@ exports.describeFailures = describeFailures;
 exports.saveCheckResults = saveCheckResults;
 exports.loadExemplars = loadExemplars;
 exports.pickCloserVoice = pickCloserVoice;
+exports.pickExemplars = pickExemplars;
 const config_js_1 = require("./config.js");
 const llm_js_1 = require("./llm.js");
 const voice_js_1 = require("./voice.js");
 const store_js_1 = require("./store.js");
 const db_js_1 = require("../db.js");
+const disclosure_js_1 = require("./disclosure.js");
 exports.CHECKS = [
     // ── decided by rule ──
     { id: "banned_phrase", label: "No banned word, filler opener, placeholder or unapproved discount", kind: "code", defaultMode: "gate" },
     { id: "one_question", label: "One question (exactly one for a prospect, at most one otherwise)", kind: "code", defaultMode: "gate" },
     { id: "question_last", label: "The question is its own final paragraph, with no closer after it", kind: "code", defaultMode: "gate" },
     { id: "tour_in_ps_only", label: "Tour invitation appears only in the P.S., and the P.S. is a statement", kind: "code", defaultMode: "gate" },
-    { id: "length", label: "Length within the set word range", kind: "code", defaultMode: "gate" },
+    { id: "form_invite", label: "Inquiry form invitation is added by the system, once, and only for guests not yet in Tripleseat", kind: "code", defaultMode: "gate" },
+    { id: "packet_on_request", label: "Event Info Packet mentioned only when the guest asked for it", kind: "code", defaultMode: "gate" },
+    { id: "length", label: "Length fits the number of questions asked", kind: "code", defaultMode: "gate" },
     { id: "plain_text", label: "Plain text with sign-off: no lists, bold, headings or emoji; one exclamation mark at most", kind: "code", defaultMode: "gate" },
+    { id: "disclosure", label: "Authorship disclosed: first-reply sentence and footer present, nothing claims a person read it first", kind: "code", defaultMode: "gate" },
     { id: "no_repeat_sentence", label: "No sentence copied from a recent reply to a different guest", kind: "code", defaultMode: "report" },
     // ── decided by the review model ──
     {
@@ -80,6 +85,10 @@ exports.CHECKS = [
         ask: "PASS only if the tone is warm and plain (not cold, not salesy, not gushing), the writer states no feelings of their own (for example I'd love, we're thrilled, so sorry you're frustrated), and the draft does not mirror the guest's anger or stress.",
     },
     {
+        id: "no_writing_tells", label: "None of the habits that read as machine-written", kind: "judge", defaultMode: "report",
+        ask: "PASS only if the draft has none of these habits: a contrast that knocks down something nobody said (not just X, it's Y); a closing line that only restates the paragraph or says that something matters; a group of three chosen for rhythm; a run-up before the point; sales language; a sentence that could be sent unchanged to any other guest. Evidence: quote the first instance and name the habit, or none.",
+    },
+    {
         id: "deferral_names_owner", label: "Anything deferred names who will follow up", kind: "judge", defaultMode: "report",
         ask: "PASS if the draft defers nothing. If it defers anything, PASS only if it says who will follow up (the events team or a named person) and states a time only when one is given in the context.",
     },
@@ -88,7 +97,7 @@ const SIGNOFF_RE = /^(warmly|best|thanks|thank you|cheers|sincerely|kindly)[,.!]
 const GREETING_ONLY_RE = /^(hi|hello|hey|dear|good (morning|afternoon|evening))\b[^.?!\n]{0,60}[,–-]?\s*$/i;
 function parseReply(text) {
     const paras = text.replace(/\r/g, "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-    let signIdx = paras.findIndex((p) => SIGNOFF_RE.test(p) || /The Village Events Team\s*$/.test(p));
+    let signIdx = paras.findIndex((p) => SIGNOFF_RE.test(p) || /^The Village\b[^\n]*$/.test(p));
     if (signIdx < 0)
         signIdx = paras.length;
     let body = paras.slice(0, signIdx);
@@ -132,10 +141,22 @@ async function recentSentences(ctx) {
     return set;
 }
 async function codeChecks(text, ctx) {
-    const min = Number(await (0, store_js_1.getSetting)("reply_min_words", "20")) || 20;
-    const max = Number(await (0, store_js_1.getSetting)("reply_max_words", "200")) || 200;
+    const min = Number(await (0, store_js_1.getSetting)("reply_min_words", "30")) || 30;
+    const maxShort = Number(await (0, store_js_1.getSetting)("reply_max_words_short", "120")) || 120;
+    const maxLong = Number(await (0, store_js_1.getSetting)("reply_max_words_long", "150")) || 150;
     const seen = await recentSentences(ctx).catch(() => new Set());
-    return structureChecks(text, ctx, { min, max, seen });
+    const out = structureChecks(text, ctx, { min, maxShort, maxLong, seen });
+    const finalText = (0, disclosure_js_1.assemble)(text, ctx.disclosure, ctx.firstReply, ctx.isEvent, ctx.formInvite ? ctx.formParagraph : "");
+    const d = (0, disclosure_js_1.disclosureCheck)(text, finalText, ctx.disclosure, ctx.firstReply, ctx.isEvent, ctx.guestAskedIfHuman);
+    out.push({ id: "disclosure", kind: "code", pass: d.pass, evidence: d.evidence });
+    // The assembled reply must carry the invitation exactly once when it is due.
+    const fi = out.find((r) => r.id === "form_invite");
+    if (fi && fi.pass && ctx.formInvite) {
+        const n = finalText.split(ctx.formParagraph.trim()).length - 1;
+        fi.pass = n === 1;
+        fi.evidence = n === 1 ? "invitation added once, above the sign-off" : `invitation appears ${n} times in the assembled reply`;
+    }
+    return out;
 }
 /** The rule-decided checks, with no database access (so they can be tested on their own). */
 function structureChecks(text, ctx, opts) {
@@ -148,8 +169,9 @@ function structureChecks(text, ctx, opts) {
     add("banned_phrase", banned.length === 0, banned.join("; ") || "none");
     // one_question
     const qCount = (bodyText.match(/\?/g) || []).length;
-    const qOk = ctx.prospect ? qCount === 1 : qCount <= 1;
-    add("one_question", qOk, `${qCount} question mark${qCount === 1 ? "" : "s"} in the body${ctx.prospect ? " (a prospect reply needs exactly one)" : ""}`);
+    // When the reply carries the inquiry form invitation, the form is the one ask, so the draft asks nothing.
+    const qOk = ctx.formInvite ? qCount === 0 : ctx.prospect ? qCount === 1 : qCount <= 1;
+    add("one_question", qOk, `${qCount} question mark${qCount === 1 ? "" : "s"} in the body${ctx.formInvite ? " (the inquiry form is the one ask, so the draft asks nothing)" : ctx.prospect ? " (a prospect reply needs exactly one)" : ""}`);
     // question_last
     if (qCount === 0) {
         add("question_last", true, "no question in this reply");
@@ -177,12 +199,33 @@ function structureChecks(text, ctx, opts) {
             problems.push("text follows the P.S.");
         if (!p.ps && p.afterPs)
             problems.push("text follows the sign-off that is not a P.S.");
+        if (ctx.formInvite && p.ps)
+            problems.push("a P.S. appears though the inquiry form is the one ask in this reply");
         add("tour_in_ps_only", problems.length === 0, problems.join("; ") || (p.ps ? "tour invitation is in the P.S." : "no tour invitation"));
+    }
+    // form_invite: the draft itself never writes about the form or its link; the system adds the paragraph.
+    {
+        const wrote = /\b(inquiry form|events? form|questionnaire|fill (it |this |that )?out)\b|party_request|tripleseat\.com/i.test(text);
+        add("form_invite", !wrote, wrote
+            ? "the draft writes its own invitation to the form or a form link"
+            : ctx.formInvite
+                ? "the draft leaves the invitation to the system"
+                : "no form invitation in this reply");
+    }
+    // packet_on_request
+    {
+        const mentions = /\b(packet|brochure|price ?sheet)\b/i.test(text);
+        add("packet_on_request", ctx.guestAskedPacket || !mentions, mentions ? (ctx.guestAskedPacket ? "the guest asked for it" : "the packet is mentioned though the guest did not ask for it") : "not mentioned");
     }
     // length
     {
+        // Target: up to maxShort words for one or two guest questions, up to maxLong for three or more.
+        // The gate allows 15% over the target so a reply a few words long is not sent back for a rewrite.
         const n = wordCount(bodyText);
-        add("length", n >= opts.min && n <= opts.max, `${n} words in the body (range ${opts.min} to ${opts.max})`);
+        const target = ctx.questions.length >= 3 ? opts.maxLong : opts.maxShort;
+        const ceiling = Math.round(target * 1.15);
+        const floor = ctx.prospect ? opts.min : Math.min(opts.min, 12);
+        add("length", n >= floor && n <= ceiling, `${n} words in the body; target up to ${target} for ${ctx.questions.length} question${ctx.questions.length === 1 ? "" : "s"} (limit ${ceiling}, minimum ${floor})`);
     }
     // plain_text
     {
@@ -191,8 +234,8 @@ function structureChecks(text, ctx, opts) {
             problems.push("list formatting");
         if (/\*\*|__|^#{1,6}\s/m.test(text))
             problems.push("bold or heading markup");
-        if (!p.signoff || !/The Village Events Team/.test(text))
-            problems.push("sign-off missing");
+        if (!p.signoff || !text.includes(ctx.signoffName))
+            problems.push(`sign-off "${ctx.signoffName}" missing`);
         const bangs = (text.match(/!/g) || []).length;
         if (bangs > 1)
             problems.push(`${bangs} exclamation marks`);
@@ -314,4 +357,17 @@ async function pickCloserVoice(a, b, exemplars) {
         maxTokens: 400,
     });
     return { pick: res.pick === "B" ? "B" : "A", reason: String(res.reason || "").slice(0, 400) };
+}
+/**
+ * Voice examples for drafting: a few of Patrick's replies from the same kind of situation and the
+ * same kind of reader, with names and amounts blanked. Chosen by situation, never by similar wording,
+ * and rotated so two guests in a week do not get replies built on the same examples.
+ */
+async function pickExemplars(tags, recipientType, n = 4) {
+    return (0, db_js_1.query)(`SELECT id, COALESCE(reply_neutral, reply_text) AS text FROM agent_exemplars
+     WHERE active AND char_length(reply_text) BETWEEN 60 AND 2500
+     ORDER BY (CASE WHEN $2 <> '' AND recipient_type = $2 THEN 1 ELSE 0 END) DESC,
+              (SELECT COUNT(*) FROM unnest(situation_tags) t WHERE t = ANY($1::text[])) DESC,
+              random()
+     LIMIT $3`, [tags, recipientType || "", n]);
 }

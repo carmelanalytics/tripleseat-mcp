@@ -40,7 +40,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.agentAdminRouter = exports.agentCronRouter = void 0;
+exports.answerKey = exports.agentAnswerRouter = exports.agentAdminRouter = exports.agentCronRouter = void 0;
 const express_1 = __importStar(require("express"));
 const middleware_js_1 = require("../middleware.js");
 const config_js_1 = require("./config.js");
@@ -49,6 +49,10 @@ const pipeline_js_1 = require("./pipeline.js");
 const digest_js_1 = require("./digest.js");
 const kb_js_1 = require("./kb.js");
 const voice_js_1 = require("./voice.js");
+const disclosure_js_1 = require("./disclosure.js");
+const onboarding_js_1 = require("./onboarding.js");
+const links_js_1 = require("./links.js");
+Object.defineProperty(exports, "answerKey", { enumerable: true, get: function () { return links_js_1.answerKey; } });
 const checks_js_1 = require("./checks.js");
 const db_js_1 = require("../db.js");
 let migrated = false;
@@ -340,7 +344,7 @@ ${rows
         .join("")}
 </table>
 <h3>Add replies</h3>
-<p>Paste a JSON list. Each item needs reply_text; inquiry_text, sent_utc, event_type, recipient_type, situation_tags and internetMessageId are optional.</p>
+<p>Paste a JSON list. Each item needs reply_text; guest_name, inquiry_text, sent_utc, event_type, recipient_type, situation_tags and internetMessageId are optional. Guest names and dollar amounts are blanked in the copy the agent writes from, so an old guest's details do not reach a new reply.</p>
 <form method="post" action="/admin/agent/exemplars/import"><textarea name="json" rows="8"></textarea>
 <p><button class="btn" type="submit">Add</button></p></form>`;
     res.type("html").send(page("Your replies", body));
@@ -355,12 +359,17 @@ exports.agentAdminRouter.post("/exemplars/import", express_1.default.urlencoded(
             const reply = String(it.reply_text || "").trim();
             if (!reply)
                 continue;
-            const out = await (0, db_js_1.query)(`INSERT INTO agent_exemplars (source, source_ref, sent_at, recipient_type, event_type, situation_tags, inquiry_text, reply_text)
-         VALUES ('outlook', $1, $2, $3, $4, $5, $6, $7) ON CONFLICT (source, source_ref) DO NOTHING RETURNING id`, [
+            const guestName = it.guest_name ? String(it.guest_name) : null;
+            const out = await (0, db_js_1.query)(`INSERT INTO agent_exemplars (source, source_ref, sent_at, recipient_type, event_type, situation_tags, inquiry_text, reply_text, guest_name, reply_neutral)
+         VALUES ('outlook', $1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (source, source_ref) DO NOTHING RETURNING id`, [
                 String(it.internetMessageId || it.id || `${reply.slice(0, 60)}:${reply.length}`),
                 it.sent_utc || null, it.recipient_type || null, it.event_type || null,
                 Array.isArray(it.situation_tags) ? it.situation_tags.map(String) : [],
                 it.inquiry_text ? String(it.inquiry_text) : null, reply,
+                guestName,
+                // The copy shown to the writing model has the guest's name and dollar amounts blanked, so
+                // it can teach voice without carrying an old guest's facts into a new reply.
+                (0, voice_js_1.neutralise)(reply, guestName || ""),
             ]);
             added += out.length;
         }
@@ -392,33 +401,67 @@ exports.agentAdminRouter.get("/settings", async (_req, res) => {
     const house = await (0, store_js_1.getSetting)("house_rules", "");
     const voice = await (0, store_js_1.getSetting)("voice_guide", "");
     const tourLink = await (0, store_js_1.getSetting)("tour_link", "");
-    const minWords = await (0, store_js_1.getSetting)("reply_min_words", "20");
-    const maxWords = await (0, store_js_1.getSetting)("reply_max_words", "200");
+    const packetLink = await (0, store_js_1.getSetting)("packet_link", "");
+    const form = await (0, onboarding_js_1.formSettings)();
+    const minWords = await (0, store_js_1.getSetting)("reply_min_words", "30");
+    const maxShort = await (0, store_js_1.getSetting)("reply_max_words_short", "120");
+    const maxLong = await (0, store_js_1.getSetting)("reply_max_words_long", "150");
     const pairwise = await (0, store_js_1.getSetting)("voice_pairwise", "on");
+    const examples = await (0, store_js_1.getSetting)("voice_examples", "on");
+    const d = await (0, disclosure_js_1.disclosureSettings)();
     const kb = await (0, db_js_1.queryOne)(`SELECT COUNT(*)::text total, COUNT(*) FILTER (WHERE usable)::text usable, MAX(synced_at)::text synced FROM agent_kb`);
+    const onOff = (name, v) => `<select name="${name}"><option value="on"${v === "on" ? " selected" : ""}>on</option><option value="off"${v === "off" ? " selected" : ""}>off</option></select>`;
+    const line = (name, v) => `<input name="${name}" style="width:100%;padding:8px" value="${esc(v)}">`;
     const body = `
 <p>FAQ knowledge base: ${kb?.usable || 0} approved answers of ${kb?.total || 0} questions, last synced ${esc(kb?.synced || "never")}.
 <form method="post" action="/admin/agent/settings/sync" style="display:inline"><button class="btn">Sync FAQ sheet now</button></form></p>
 <form method="post" action="/admin/agent/settings">
-<h3>House rules</h3><p>Internal policy the agent follows (never quoted to guests). Keep unpublished pricing out.</p>
+<h3>House rules</h3><p>Internal policy the agent follows (never quoted to guests). Keep unpublished pricing out. Seasonal or dated notes belong here too, for example a road closure or a week the restaurant is closed.</p>
 <textarea name="house_rules" rows="18">${esc(house)}</textarea>
 <h3>Reply structure</h3>
-<p>Tour scheduling link for the P.S. (leave blank to invite guests to send a day and time):<br>
-<input name="tour_link" style="width:100%;padding:8px" value="${esc(tourLink)}"></p>
-<p>Body length in words: from <input name="reply_min_words" size="4" value="${esc(minWords)}"> to <input name="reply_max_words" size="4" value="${esc(maxWords)}">
-&middot; Two drafts with voice comparison: <select name="voice_pairwise"><option value="on"${pairwise === "on" ? " selected" : ""}>on</option><option value="off"${pairwise === "off" ? " selected" : ""}>off</option></select></p>
+<p>Tour scheduling link for the P.S. (leave blank to invite guests to send a day and time):<br>${line("tour_link", tourLink)}</p>
+<p>Event Info Packet link, given only when a guest asks for the packet (leave blank and the agent says the events team will send it):<br>${line("packet_link", packetLink)}</p>
+<p>Body length in words: at least <input name="reply_min_words" size="4" value="${esc(minWords)}">,
+up to <input name="reply_max_words_short" size="4" value="${esc(maxShort)}"> for one or two questions and
+<input name="reply_max_words_long" size="4" value="${esc(maxLong)}"> for three or more.</p>
+<p>Write from your own replies as examples: ${onOff("voice_examples", examples)}
+&middot; Two drafts with voice comparison: ${onOff("voice_pairwise", pairwise)}</p>
+<h3>Bringing guests into Tripleseat</h3>
+<p>An event guest who writes in from outside Tripleseat (direct email, The Knot, WeddingWire, Zola) and is not in Tripleseat yet gets this invitation above the sign-off of the reply. The system adds it, so the link is always exact. {link} is replaced by the form link. Leave the link blank to switch the invitation off; the agent then creates the lead itself.</p>
+<p>Events inquiry form link:<br>${line("inquiry_form_link", form.link)}</p>
+<p>Invitation:<br><textarea name="inquiry_form_text" rows="5">${esc(form.text)}</textarea></p>
+<p>Invitation when the guest asked for a tour:<br><textarea name="inquiry_form_text_tour" rows="4">${esc(form.textTour)}</textarea></p>
+<h3>AI disclosure</h3>
+<p>Added to every reply by the system, so the wording cannot drift. The sentence goes in the first reply to a guest; the footer goes on every reply.</p>
+<p>Disclosure: ${onOff("disclosure_mode", d.on ? "on" : "off")}</p>
+<p>First-reply sentence, event inquiries:<br><textarea name="disclosure_line_events" rows="3">${esc(d.lineEvents)}</textarea></p>
+<p>First-reply sentence, other inquiries:<br><textarea name="disclosure_line_general" rows="3">${esc(d.lineGeneral)}</textarea></p>
+<p>Footer on every reply:<br><textarea name="disclosure_footer" rows="3">${esc(d.footer)}</textarea></p>
 <h3>Voice guide</h3><p>Leave blank to use the built-in guide (shown below as a starting point).</p>
 <textarea name="voice_guide" rows="18" placeholder="${esc(voice_js_1.DEFAULT_VOICE_GUIDE)}">${esc(voice)}</textarea>
 <p><button class="btn" type="submit">Save</button></p></form>`;
     res.type("html").send(page("House rules & voice", body));
 });
 exports.agentAdminRouter.post("/settings", async (req, res) => {
+    const text = (k) => String(req.body[k] || "").trim();
+    const num = (k, fallback) => String(Math.max(1, Math.round(Number(req.body[k]) || fallback)));
     await (0, store_js_1.setSetting)("house_rules", String(req.body.house_rules || ""));
     await (0, store_js_1.setSetting)("voice_guide", String(req.body.voice_guide || ""));
-    await (0, store_js_1.setSetting)("tour_link", String(req.body.tour_link || "").trim());
-    await (0, store_js_1.setSetting)("reply_min_words", String(Number(req.body.reply_min_words) || 20));
-    await (0, store_js_1.setSetting)("reply_max_words", String(Number(req.body.reply_max_words) || 200));
+    await (0, store_js_1.setSetting)("tour_link", text("tour_link"));
+    await (0, store_js_1.setSetting)("packet_link", text("packet_link"));
+    await (0, store_js_1.setSetting)("inquiry_form_link", text("inquiry_form_link"));
+    await (0, store_js_1.setSetting)("inquiry_form_text", String(req.body.inquiry_form_text || "").trim());
+    await (0, store_js_1.setSetting)("inquiry_form_text_tour", String(req.body.inquiry_form_text_tour || "").trim());
+    await (0, store_js_1.setSetting)("reply_min_words", num("reply_min_words", 30));
+    await (0, store_js_1.setSetting)("reply_max_words_short", num("reply_max_words_short", 120));
+    await (0, store_js_1.setSetting)("reply_max_words_long", num("reply_max_words_long", 150));
     await (0, store_js_1.setSetting)("voice_pairwise", req.body.voice_pairwise === "off" ? "off" : "on");
+    await (0, store_js_1.setSetting)("voice_examples", req.body.voice_examples === "off" ? "off" : "on");
+    await (0, store_js_1.setSetting)("disclosure_mode", req.body.disclosure_mode === "off" ? "off" : "on");
+    // A blank box restores the built-in wording rather than sending replies with no disclosure text.
+    await (0, store_js_1.setSetting)("disclosure_line_events", text("disclosure_line_events") || disclosure_js_1.DEFAULT_LINE_EVENTS);
+    await (0, store_js_1.setSetting)("disclosure_line_general", text("disclosure_line_general") || disclosure_js_1.DEFAULT_LINE_GENERAL);
+    await (0, store_js_1.setSetting)("disclosure_footer", text("disclosure_footer") || disclosure_js_1.DEFAULT_FOOTER);
     res.redirect("/admin/agent/settings");
 });
 exports.agentAdminRouter.post("/settings/sync", async (_req, res) => {
@@ -429,4 +472,65 @@ exports.agentAdminRouter.post("/settings/sync", async (_req, res) => {
     catch (e) {
         res.type("html").send(page("Sync failed", `<pre>${esc(e.message)}</pre>`));
     }
+});
+// ─────────────────────────── "Would you have sent this unchanged?" ───────────────────────────
+// Reached from the buttons on each copy Patrick receives. No sign-in: the link carries a key for that
+// one message. The email link only opens this page; the answer is recorded when the button here is
+// pressed, so a mail scanner that follows links cannot answer by accident.
+exports.agentAnswerRouter = (0, express_1.Router)();
+function answerPage(title, body) {
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:24px auto;padding:0 16px;color:#222}pre{white-space:pre-wrap;font-family:inherit;background:#eef5ee;padding:12px;border-radius:4px}
+textarea{width:100%;box-sizing:border-box;padding:8px;font:inherit}button{padding:12px 22px;font-size:16px;font-weight:bold;color:#fff;border:0;border-radius:4px;margin:6px 10px 6px 0}
+.yes{background:#2e6b4f}.no{background:#8a3b2e}.muted{color:#666}</style></head><body><h2>${esc(title)}</h2>${body}</body></html>`;
+}
+async function unchangedScore() {
+    const r = await (0, db_js_1.queryOne)(`SELECT COUNT(*) FILTER (WHERE owner_sent_unchanged)::text AS yes,
+            COUNT(*) FILTER (WHERE owner_sent_unchanged IS NOT NULL)::text AS total,
+            COUNT(*) FILTER (WHERE owner_sent_unchanged IS NULL AND reply_text IS NOT NULL AND action IN ('sent','drafted'))::text AS waiting
+     FROM agent_messages`);
+    const yes = Number(r?.yes || 0), total = Number(r?.total || 0);
+    return total
+        ? `${yes} of ${total} unchanged (${Math.round((100 * yes) / total)}%). ${r?.waiting || 0} waiting for an answer.`
+        : `No answers yet. ${r?.waiting || 0} waiting for an answer.`;
+}
+exports.agentAnswerRouter.get("/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const k = String(req.query.k || "");
+    if (!Number.isFinite(id) || !(0, links_js_1.answerKeyValid)(id, k)) {
+        res.status(403).type("html").send(answerPage("This link is not valid", `<p>Open the reply from the admin pages instead.</p>`));
+        return;
+    }
+    await ensure();
+    const r = await (0, db_js_1.queryOne)(`SELECT * FROM agent_messages WHERE id = $1`, [id]);
+    if (!r || !r.reply_text) {
+        res.status(404).type("html").send(answerPage("Reply not found", ""));
+        return;
+    }
+    const a = req.query.a === "no" ? "no" : "yes";
+    const prior = r.owner_sent_unchanged === null || r.owner_sent_unchanged === undefined ? "" : `<p class="muted">Your earlier answer: ${r.owner_sent_unchanged ? "Yes" : "No"}. Answering again replaces it.</p>`;
+    const form = (answer, primary) => `
+<form method="post" action="/agent/answer/${id}">
+<input type="hidden" name="k" value="${esc(k)}"><input type="hidden" name="answer" value="${answer}">
+${answer === "no" ? `<p>What would you change? (optional)<br><textarea name="critique" rows="4"></textarea></p>` : ""}
+<button class="${answer}" type="submit">${answer === "yes" ? "Yes, I would have sent this unchanged" : "No, I would have changed it"}</button>
+${primary ? "" : ""}</form>`;
+    const body = `<p class="muted">${esc(r.guest_name || r.from_address)} &middot; ${esc(r.subject)}</p>
+<pre>${esc(r.reply_text)}</pre>${prior}
+${a === "yes" ? form("yes", true) + form("no", false) : form("no", true) + form("yes", false)}`;
+    res.type("html").send(answerPage("Would you have sent this unchanged?", body));
+});
+exports.agentAnswerRouter.post("/:id", express_1.default.urlencoded({ extended: true, limit: "100kb" }), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || !(0, links_js_1.answerKeyValid)(id, String(req.body.k || ""))) {
+        res.status(403).type("html").send(answerPage("This link is not valid", ""));
+        return;
+    }
+    await ensure();
+    const unchanged = req.body.answer === "yes";
+    const critique = unchanged ? null : String(req.body.critique || "").trim().slice(0, 4000) || null;
+    await (0, db_js_1.query)(`UPDATE agent_messages SET owner_sent_unchanged=$2, owner_critique=COALESCE($3, owner_critique), owner_labelled_at=NOW() WHERE id=$1`, [id, unchanged, critique]);
+    res.type("html").send(answerPage("Recorded", `<p>${unchanged ? "Yes: you would have sent it unchanged." : "No: you would have changed it."}</p>
+<p><b>Score so far:</b> ${esc(await unchangedScore())}</p>
+<p class="muted"><a href="/agent/answer/${id}?k=${esc(String(req.body.k))}&a=${unchanged ? "no" : "yes"}">Change this answer</a></p>`));
 });

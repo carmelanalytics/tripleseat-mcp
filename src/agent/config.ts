@@ -51,6 +51,14 @@ export const agentConfig = {
   escalateTo: list("AGENT_ESCALATE_TO", "events@thevillagebigsur.com,patrick@thevillagebigsur.com"),
   sendAs: env("AGENT_SEND_AS", "events@thevillagebigsur.com"),
 
+  // Restaurant, Bodega, yoga and general replies leave from info@ with the department copied
+  generalSendAs: env("AGENT_GENERAL_SEND_AS", "info@thevillagebigsur.com"),
+  deptCc: {
+    Solstice: env("AGENT_CC_SOLSTICE", "solstice@thevillagebigsur.com"),
+    Bodega: env("AGENT_CC_BODEGA", "bodega@thevillagebigsur.com"),
+    Yoga: env("AGENT_CC_YOGA", "yoga@thevillagebigsur.com"),
+  } as Record<string, string>,
+
   // Google Sheet that holds the FAQ (shared with the service account, read-only)
   faqSheetId: env("AGENT_FAQ_SHEET_ID"),
   faqRange: env("AGENT_FAQ_RANGE", "FAQ!A1:G400"),
@@ -58,6 +66,10 @@ export const agentConfig = {
 
   // Tripleseat
   tripleseatLocationId: env("TRIPLESEAT_LOCATION_ID"),
+  // The events inquiry form (questionnaire) that event guests outside Tripleseat are invited to fill out
+  inquiryFormLink: env("AGENT_INQUIRY_FORM_LINK", "https://thevillagebigsur.tripleseat.com/party_request/30602"),
+  // After this many invitations with no form filled out, the conversation goes to a person
+  formInviteMax: Number(env("AGENT_FORM_INVITE_MAX", "2")),
 
   // Cron shared secret (Vercel sends Authorization: Bearer <CRON_SECRET>)
   cronSecret: env("CRON_SECRET"),

@@ -124,10 +124,11 @@ export async function replyToMessage(
 }
 
 /**
- * Send a guest-facing email from events@ when the inbound copy sits in another mailbox.
- * The original message is quoted underneath so a Tripleseat thread token travels with it.
+ * Send a guest-facing email from one of the venue's mailboxes when the inbound copy sits in another
+ * mailbox. The original message is quoted underneath so a Tripleseat thread token travels with it.
  */
-export async function sendAsEvents(
+export async function sendFrom(
+  fromMailbox: string,
   to: string,
   subject: string,
   text: string,
@@ -135,15 +136,16 @@ export async function sendAsEvents(
   quotedBody: string,
   cc: string[] = []
 ): Promise<void> {
-  const body = `${text}\n\n----- Original message -----\nFrom: ${quotedFrom}\nSubject: ${subject}\n\n${quotedBody}`;
-  await graph(`/users/${encodeURIComponent(agentConfig.sendAs)}/sendMail`, {
+  const fresh = !quotedBody;
+  const body = fresh ? text : `${text}\n\n----- Original message -----\nFrom: ${quotedFrom}\nSubject: ${subject}\n\n${quotedBody}`;
+  await graph(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
     method: "POST",
     body: JSON.stringify({
       message: {
-        subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+        subject: fresh || /^re:/i.test(subject) ? subject : `Re: ${subject}`,
         body: { contentType: "Text", content: body },
         toRecipients: [{ emailAddress: { address: to } }],
-        ccRecipients: cc.filter((c) => c.toLowerCase() !== to.toLowerCase()).map((address) => ({ emailAddress: { address } })),
+        ccRecipients: cc.filter((c) => c && c.toLowerCase() !== to.toLowerCase()).map((address) => ({ emailAddress: { address } })),
       },
       saveToSentItems: true,
     }),

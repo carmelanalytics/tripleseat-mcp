@@ -186,10 +186,10 @@ export async function createLead(input: {
 }
 
 /**
- * Put a copy of a sent reply on the Tripleseat record as a completed-style task, so replies that
- * travel outside a Tripleseat discussion are still on the record.
+ * When a reply tells a guest that the team will confirm something, put a task on the Tripleseat lead
+ * so the promise has an owner.
  */
-export async function logToTripleseat(
+export async function followUpTask(
   rec: { leadId?: string; eventId?: string },
   body: string
 ): Promise<void> {
@@ -208,4 +208,22 @@ export async function logToTripleseat(
     assignee_ids: assignees,
     site_id: siteId,
   });
+}
+
+/**
+ * Write where an inquiry began on its Tripleseat lead ("ORIGIN: ..."). Tripleseat has accepted more
+ * than one field name for a note's text, so try each in turn.
+ */
+export async function originNote(leadId: string, text: string): Promise<void> {
+  const shapes = [{ note: { body: text } }, { note: { content: text } }, { note: { note: text } }];
+  let lastErr: any;
+  for (const body of shapes) {
+    try {
+      await tripleseatPost(`/leads/${leadId}/notes`, body);
+      return;
+    } catch (e: any) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
 }

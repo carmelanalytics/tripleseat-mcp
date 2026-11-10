@@ -94,22 +94,70 @@ Webhooks: New lead alerts, 48-hour response monitor, BEO completeness checker
 `src/agent/` answers guest inquiries that arrive by email (Tripleseat discussion notifications,
 The Knot / WeddingWire, Zola, and direct mail to events@ / info@ / patrick@) in The Village voice.
 
-Flow (every 5 minutes, `/agent/cron/poll`): new mail is queued, sorted by source, triaged by Claude
-(inquiry or not, department, topics, dates, escalation), checked against Tripleseat (existing lead or
-event, date availability), answered from the approved FAQ answers and house rules, checked twice
-(code rules plus a separate review model), then sent. Every guest email leaves from events@. Event conversations live in Tripleseat: an event
-inquiry that arrives by The Knot, WeddingWire, Zola or direct email becomes a Tripleseat lead and is
-answered on the lead's Tripleseat discussion thread (by replying, from events@, to the Tripleseat
-discussion email, which carries the thread token). Non-event questions (Solstice, Bodega, yoga) are
-answered by email from events@.
-Anything about money, contract changes, booked-date changes, fire or road closures, complaints,
-press or custom pricing goes to a person instead.
+### Flow (every 5 minutes, `/agent/cron/poll`)
 
-Visibility: every sent reply is copied to Patrick with a "Correct this reply" link; `/admin/agent`
-shows the full log; corrections become rules the agent follows from then on; a daily digest lists
-everything plus the questions the FAQ couldn't answer.
+1. New mail is queued and sorted by source.
+2. Claude triages it: inquiry or not, department, topics, dates, who is writing, whether a person must take it.
+3. Tripleseat is checked for an existing lead or event and for the date.
+4. The reply plan is decided in code: how the reply ends, the sign-off, whether a tour P.S. is due.
+5. Claude writes the reply from the approved FAQ answers and house rules, using a few of Patrick's own
+   past replies as voice examples. With three or more examples loaded it writes two drafts and keeps
+   the one the review model judges closer to Patrick's.
+6. Yes/no checks run (rule checks in code, the rest by a separate review model). A failed blocking
+   check gets one automatic rewrite, then a person.
+7. Fixed wording is added in code: the AI disclosure and, where due, the inquiry form invitation.
+8. The reply is sent (`live`) or only drafted (`shadow`). Either way Patrick gets a copy.
+
+### Where a reply goes
+
+- **Event conversations run in Tripleseat, from events@.** A message that arrives on a Tripleseat
+  discussion thread is answered on that thread.
+- **Event guests who write in from outside Tripleseat** (direct email, The Knot, WeddingWire, Zola)
+  and are not in Tripleseat yet get a reply from events@ whose last paragraph invites them to fill
+  out the Tripleseat events inquiry form, the way the events team always has. The form creates the
+  lead, so the agent does not create one and nothing is duplicated. When that lead appears, the
+  agent writes "ORIGIN: ..." on it. After `AGENT_FORM_INVITE_MAX` invitations (default 2) with no
+  form, the conversation goes to a person; the digest lists guests invited more than three days ago
+  who are still not in Tripleseat. The Knot is skipped here when `AGENT_KNOT_NATIVE=true`, because
+  The Knot's own Tripleseat integration creates that lead. A marketplace notice with no guest email
+  address goes to a person. Blank the form link in settings to switch the invitation off; the agent
+  then creates the lead itself.
+- **Solstice, Bodega, yoga and general questions** are answered from info@ with the department
+  copied (solstice@, bodega@ or yoga@).
+- Money, contract changes, booked-date changes, fire or road closures, complaints, press, custom
+  pricing, an angry guest or a mainly personal note go to a person, with a short brief.
+
+### How a reply is built
+
+- Event prospects: answer first, then one question in its own last paragraph, picked by the state of
+  the date (open, taken, none given). The tour invitation is a P.S.
+- The Event Info Packet is mentioned only when the guest asks for it. Otherwise the events team sends it.
+- AI disclosure: one sentence in the first reply and a footer on every reply, both added in code and
+  editable in settings (California Business and Professions Code 17940 to 17943).
+
+### Visibility and scoring
+
+- Every reply, sent or drafted, is copied to Patrick with the question "Would you have sent this
+  unchanged?" and Yes / No buttons. The buttons open `/agent/answer/:id` (a signed link, no sign-in);
+  the answer is recorded when the button on that page is pressed. Those answers are the score, shown
+  on the confirmation page and in the daily digest.
+- `/admin/agent` shows the full log. On a message page Patrick can correct the reply (corrections
+  become rules), label each check pass or fail, and pick blind between the two drafts.
+- `/admin/agent/checks` shows each check's agreement with Patrick's labels. A check counts as
+  validated at 100 labels with 90% agreement and 80% of his fails caught. Each check can be set to
+  block or to note only.
+- `/admin/agent/exemplars` holds Patrick's own replies (JSON import). Guest names and dollar amounts
+  are blanked in the copy the agent writes from.
+- The daily digest lists everything, the questions the FAQ could not answer, what was not answered
+  and why, and the checks that failed most.
+
+### Setup
 
 Business facts are not stored in this repository: FAQ answers sync hourly from the FAQ Google Sheet
 (`/agent/cron/kb-sync`) and house rules are edited at `/admin/agent/settings`.
 
-Set the Vercel project's Function Max Duration to 300 seconds. Start in `AGENT_MODE=shadow`.
+- Tripleseat: site 12601, location 24590 (`TRIPLESEAT_LOCATION_ID`, `TRIPLESEAT_SITE_ID`).
+- Microsoft 365: an app registration with Mail.ReadWrite and Mail.Send (application), limited by an
+  Exchange application access policy to events@, info@ and patrick@.
+- `PUBLIC_BASE_URL` and `CRON_SECRET` (or `AGENT_LINK_SECRET`) are needed for the Yes / No links.
+- Set the Vercel project's Function Max Duration to 300 seconds. Start in `AGENT_MODE=shadow`.

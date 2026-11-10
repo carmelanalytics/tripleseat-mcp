@@ -127,8 +127,17 @@ async function migrateAgent() {
         "owner_critique TEXT",
         "owner_labelled_at TIMESTAMPTZ",
         "check_attempts INTEGER DEFAULT 0",
+        "recipient_type TEXT",
+        "situation_tags TEXT[] DEFAULT '{}'",
+        "compose_exemplar_ids INTEGER[]",
+        "model_reply_text TEXT",
+        "form_invited_at TIMESTAMPTZ",
+        "origin_noted_at TIMESTAMPTZ",
     ]) {
         await (0, db_js_1.query)(`ALTER TABLE agent_messages ADD COLUMN IF NOT EXISTS ${col}`);
+    }
+    for (const col of ["guest_name TEXT", "reply_neutral TEXT"]) {
+        await (0, db_js_1.query)(`ALTER TABLE agent_exemplars ADD COLUMN IF NOT EXISTS ${col}`);
     }
     // Graph delta links per mailbox
     await (0, db_js_1.query)(`

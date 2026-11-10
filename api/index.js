@@ -238,6 +238,7 @@ app.post("/oauth/token", async (req, res) => {
 });
 // ── Admin Dashboard ──
 app.use("/agent/cron", routes_js_2.agentCronRouter);
+app.use("/agent/answer", routes_js_2.agentAnswerRouter);
 app.use("/admin/agent", routes_js_2.agentAdminRouter);
 app.use("/admin", routes_js_1.adminRouter);
 // ── Account: Change Password ──

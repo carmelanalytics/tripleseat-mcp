@@ -25,6 +25,18 @@ async function sendDigest() {
     SELECT check_id, COUNT(*)::int AS n FROM latest
     WHERE NOT pass AND created_at > NOW() - INTERVAL '24 hours' GROUP BY check_id ORDER BY n DESC LIMIT 6`).catch(() => []);
     const toLabel = rows.filter((r) => r.reply_text && !r.owner_labelled_at).length;
+    const score = await (0, db_js_1.query)(`SELECT COUNT(*) FILTER (WHERE owner_sent_unchanged)::int AS yes,
+            COUNT(*) FILTER (WHERE owner_sent_unchanged IS NOT NULL)::int AS total,
+            COUNT(*) FILTER (WHERE owner_sent_unchanged IS NULL AND reply_text IS NOT NULL AND action IN ('sent','drafted'))::int AS waiting
+     FROM agent_messages`).catch(() => []);
+    const sc = score[0] || { yes: 0, total: 0, waiting: 0 };
+    // Guests invited to the inquiry form who have not appeared in Tripleseat after three days.
+    const notOnboarded = await (0, db_js_1.query)(`SELECT DISTINCT ON (LOWER(guest_email)) guest_name, guest_email, form_invited_at::text AS invited, source
+     FROM agent_messages
+     WHERE form_invited_at IS NOT NULL AND origin_noted_at IS NULL
+       AND form_invited_at < NOW() - INTERVAL '3 days' AND form_invited_at > NOW() - INTERVAL '30 days'
+     ORDER BY LOWER(guest_email), form_invited_at`).catch(() => []);
+    const notAnswered = [...ignored, ...waiting];
     const openQs = rows.flatMap((r) => (r.open_questions || []).map((q) => ({ q, r })));
     const card = (r) => `
 <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin:10px 0">
@@ -39,12 +51,17 @@ async function sendDigest() {
 <div style="font-family:Arial,sans-serif;max-width:760px">
 <h2>Inquiry agent: last 24 hours</h2>
 <p>Mode: <b>${config_js_1.agentConfig.mode}</b> &middot; Sent ${sent.length} &middot; Drafted (not sent) ${drafted.length} &middot; Handed to a person ${escalated.length} &middot; Errors ${errored.length} &middot; Waiting for a Tripleseat thread ${waiting.length} &middot; Not inquiries ${ignored.length}</p>
+<p><b>Would you have sent it unchanged?</b> ${sc.total ? `${sc.yes} of ${sc.total} yes (${Math.round((100 * sc.yes) / sc.total)}%)` : "No answers yet"}. Waiting for your answer: ${sc.waiting}.</p>
 <p>Checks failed most often: ${failing.length ? failing.map((f) => `${esc(f.check_id)} (${f.n})`).join(", ") : "none"}. Replies waiting for your pass/fail labels: ${toLabel} &middot; <a href="${base}/admin/agent/checks">check statistics</a></p>
 ${openQs.length ? `<h3>Questions the agent could not answer (add these to the FAQ sheet)</h3><ul>${openQs.map((o) => `<li>${esc(o.q)} <span style="color:#666">(${esc(o.r.guest_name || o.r.from_address)})</span></li>`).join("")}</ul>` : ""}
 ${escalated.length ? `<h3>Handed to a person</h3>${escalated.map(card).join("")}` : ""}
 ${sent.length ? `<h3>Sent</h3>${sent.map(card).join("")}` : ""}
 ${drafted.length ? `<h3>Drafted, not sent</h3>${drafted.map(card).join("")}` : ""}
 ${errored.length ? `<h3>Errors</h3>${errored.map(card).join("")}` : ""}
+${notOnboarded.length ? `<h3>Invited to the inquiry form, not in Tripleseat yet</h3><ul>${notOnboarded.map((n) => `<li>${esc(n.guest_name || n.guest_email)} &lt;${esc(n.guest_email)}&gt; &middot; ${esc(n.source)} &middot; invited ${esc((n.invited || "").slice(0, 10))}</li>`).join("")}</ul>` : ""}
+${notAnswered.length ? `<h3>Not answered, and why</h3><table style="border-collapse:collapse;font-size:13px"><tr><th style="text-align:left;padding:4px 8px">From</th><th style="text-align:left;padding:4px 8px">Subject</th><th style="text-align:left;padding:4px 8px">Reason</th></tr>${notAnswered
+        .map((r) => `<tr><td style="padding:4px 8px;border-top:1px solid #ddd">${esc(r.guest_name || r.from_address)}</td><td style="padding:4px 8px;border-top:1px solid #ddd">${esc((r.subject || "").slice(0, 80))}</td><td style="padding:4px 8px;border-top:1px solid #ddd">${esc(r.action === "awaiting_ts" ? "Waiting for its Tripleseat thread" : r.review_notes || "Not an inquiry")}</td></tr>`)
+        .join("")}</table>` : ""}
 <p style="color:#666">Full log: <a href="${base}/admin/agent">${base}/admin/agent</a></p>
 </div>`;
     await (0, graph_js_1.sendInternal)(config_js_1.agentConfig.sendAs, config_js_1.agentConfig.digestTo, `Inquiry agent digest: ${sent.length} sent, ${escalated.length} for a person`, html, config_js_1.agentConfig.digestCc);

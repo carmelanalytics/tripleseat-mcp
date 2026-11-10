@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.fetchNewMessages = fetchNewMessages;
 exports.getMessage = getMessage;
 exports.replyToMessage = replyToMessage;
-exports.sendAsEvents = sendAsEvents;
+exports.sendFrom = sendFrom;
 exports.sendInternal = sendInternal;
 exports.categorize = categorize;
 const config_js_1 = require("./config.js");
@@ -100,19 +100,20 @@ async function replyToMessage(mailbox, messageId, text, cc = []) {
     });
 }
 /**
- * Send a guest-facing email from events@ when the inbound copy sits in another mailbox.
- * The original message is quoted underneath so a Tripleseat thread token travels with it.
+ * Send a guest-facing email from one of the venue's mailboxes when the inbound copy sits in another
+ * mailbox. The original message is quoted underneath so a Tripleseat thread token travels with it.
  */
-async function sendAsEvents(to, subject, text, quotedFrom, quotedBody, cc = []) {
-    const body = `${text}\n\n----- Original message -----\nFrom: ${quotedFrom}\nSubject: ${subject}\n\n${quotedBody}`;
-    await graph(`/users/${encodeURIComponent(config_js_1.agentConfig.sendAs)}/sendMail`, {
+async function sendFrom(fromMailbox, to, subject, text, quotedFrom, quotedBody, cc = []) {
+    const fresh = !quotedBody;
+    const body = fresh ? text : `${text}\n\n----- Original message -----\nFrom: ${quotedFrom}\nSubject: ${subject}\n\n${quotedBody}`;
+    await graph(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
         method: "POST",
         body: JSON.stringify({
             message: {
-                subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+                subject: fresh || /^re:/i.test(subject) ? subject : `Re: ${subject}`,
                 body: { contentType: "Text", content: body },
                 toRecipients: [{ emailAddress: { address: to } }],
-                ccRecipients: cc.filter((c) => c.toLowerCase() !== to.toLowerCase()).map((address) => ({ emailAddress: { address } })),
+                ccRecipients: cc.filter((c) => c && c.toLowerCase() !== to.toLowerCase()).map((address) => ({ emailAddress: { address } })),
             },
             saveToSentItems: true,
         }),

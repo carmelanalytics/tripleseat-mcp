@@ -18,7 +18,7 @@ import {
 import { tripleseatGet, tripleseatPost, tripleseatPut } from "./tripleseat.js";
 import { oauthTokenAuth } from "./middleware.js";
 import { adminRouter } from "./admin/routes.js";
-import { agentCronRouter, agentAdminRouter } from "./agent/routes.js";
+import { agentCronRouter, agentAdminRouter, agentAnswerRouter } from "./agent/routes.js";
 import { logToolCall } from "./usage.js";
 import { migrate } from "./db.js";
 import { seedDefaultRoles } from "./roles.js";
@@ -289,6 +289,7 @@ app.post("/oauth/token", async (req, res) => {
 
 // ── Admin Dashboard ──
 app.use("/agent/cron", agentCronRouter);
+app.use("/agent/answer", agentAnswerRouter);
 app.use("/admin/agent", agentAdminRouter);
 app.use("/admin", adminRouter);
 
