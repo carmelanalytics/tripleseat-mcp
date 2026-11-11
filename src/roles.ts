@@ -59,6 +59,9 @@ const ALL_TOOLS = [
   "payment_transaction_report",
   "payment_refund_report",
   "tripleseat_api_request",
+  // Added 2026-11-10 (discussion-tools.ts)
+  "get_discussion_thread",
+  "send_discussion_message",
 ] as const;
 
 export { ALL_TOOLS };
@@ -181,6 +184,7 @@ export async function seedDefaultRoles(): Promise<{ created: string[]; updated: 
         "add_note",
         "update_note",
         "create_event_task",
+        "get_discussion_thread",
       ],
     },
     {

@@ -3,6 +3,7 @@
  * Microsoft Graph client (client-credentials flow) for the Village mailboxes.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.graph = graph;
 exports.fetchNewMessages = fetchNewMessages;
 exports.getMessage = getMessage;
 exports.replyToMessage = replyToMessage;

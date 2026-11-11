@@ -15,6 +15,7 @@ const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const auth_js_1 = require("./auth.js");
 const tripleseat_js_1 = require("./tripleseat.js");
 const extra_tools_js_1 = require("./extra-tools.js");
+const discussion_tools_js_1 = require("./discussion-tools.js");
 const middleware_js_1 = require("./middleware.js");
 const routes_js_1 = require("./admin/routes.js");
 const routes_js_2 = require("./agent/routes.js");
@@ -844,7 +845,8 @@ const TOOLS = [
             required: ["contact_id", "body", "due_date", "priority", "task_type_id", "assignee_ids", "site_id"]
         }
     },
-    ...extra_tools_js_1.EXTRA_TOOLS
+    ...extra_tools_js_1.EXTRA_TOOLS,
+    ...discussion_tools_js_1.DISCUSSION_TOOLS
 ];
 // ── Response Size Management ──
 const MAX_RESPONSE_CHARS = 12000;
@@ -1119,6 +1121,9 @@ async function executeTool(name, args, roleName) {
             return JSON.stringify(data, null, 2);
         }
         default: {
+            const discussion = await (0, discussion_tools_js_1.executeDiscussionTool)(name, args);
+            if (discussion !== null)
+                return discussion;
             const extra = await (0, extra_tools_js_1.executeExtraTool)(name, args, roleName);
             if (extra !== null)
                 return extra;
@@ -1135,7 +1140,7 @@ const SERVER_INSTRUCTIONS = `You are connected to Tripleseat for The Village, Bi
 
 Lead origin (standing rule): every lead must record where it came from (The Knot, WeddingWire, Zola, website form, phone, email/referral, walk-in, etc.). Set it with set_lead_source (or lead_source_ids on create_lead/update_lead) and add an "ORIGIN: ..." note describing the path the inquiry took. Use list_lead_sources for IDs; if a needed source is missing, ask the user to add it in Tripleseat (Settings > Preferences > Drop-downs > Lead Source).
 
-What still needs the Tripleseat web app: recording or editing payments, adding menu/rental line items, and creating new drop-down options. Notes (add_note) replace the old practice of typing notes in the browser; billing items such as discounts can be set with update_billing_amount.
+What still needs the Tripleseat web app: recording or editing payments, adding menu/rental line items, and creating new drop-down options. Discussions: Tripleseat's API has no discussions endpoint, so get_discussion_thread rebuilds a thread from the Tripleseat relay emails in events@, and send_discussion_message posts on the thread by replying from events@ to a relay email (dry_run first; send only after the user approves the exact text and attachments). Notes (add_note) replace the old practice of typing notes in the browser; billing items such as discounts can be set with update_billing_amount.
 
 Response size: search/list tools return summary fields only. Use get_event / get_lead / get_booking / get_contact for detail, and only for the records the user asks about.
 
