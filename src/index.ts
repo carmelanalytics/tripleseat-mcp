@@ -17,13 +17,14 @@ import {
 } from "./auth.js";
 import { tripleseatGet, tripleseatPost, tripleseatPut } from "./tripleseat.js";
 import { EXTRA_TOOLS, executeExtraTool } from "./extra-tools.js";
+import { DISCUSSION_TOOLS, executeDiscussionTool } from "./discussion-tools.js";
 import { oauthTokenAuth } from "./middleware.js";
 import { adminRouter } from "./admin/routes.js";
 import { agentCronRouter, agentAdminRouter, agentAnswerRouter } from "./agent/routes.js";
 import { logToolCall } from "./usage.js";
 import { migrate } from "./db.js";
 import { seedDefaultRoles } from "./roles.js";
-import { seedAdminUser, changePassword } from "./users.js";
+import { seedAdminUser, changePassword, resetPassword } from "./users.js";
 import { authenticateUser } from "./users.js";
 import {
   getMetadata,
@@ -60,6 +61,18 @@ async function ensureMigrated(): Promise<void> {
     if (adminRole.length > 0) {
       const result = await seedAdminUser(adminRole[0].id);
       if (result.created) console.log("[Init] Seeded admin user:", result.email);
+
+      // One-time admin password reset: set ADMIN_RESET_PASSWORD in Vercel, redeploy, sign in, then delete the variable.
+      const resetTo = process.env.ADMIN_RESET_PASSWORD;
+      if (resetTo) {
+        const admin = await dbQuery<{ id: string; email: string }>(
+          `SELECT id, email FROM mcp_users WHERE is_admin = true ORDER BY created_at LIMIT 1`
+        );
+        if (admin.length > 0) {
+          await resetPassword(admin[0].id, resetTo);
+          console.log("[Init] Admin password reset from ADMIN_RESET_PASSWORD for:", admin[0].email);
+        }
+      }
     }
   } catch (err: any) {
     console.error("[Init] Migration error:", err.message);
@@ -920,7 +933,8 @@ const TOOLS = [
       required: ["contact_id", "body", "due_date", "priority", "task_type_id", "assignee_ids", "site_id"]
     }
   },
-  ...EXTRA_TOOLS
+  ...EXTRA_TOOLS,
+  ...DISCUSSION_TOOLS
 ];
 
 // ── Response Size Management ──
@@ -1172,6 +1186,8 @@ async function executeTool(name: string, args: any, roleName?: string): Promise<
     }
 
     default: {
+      const discussion = await executeDiscussionTool(name, args);
+      if (discussion !== null) return discussion;
       const extra = await executeExtraTool(name, args, roleName);
       if (extra !== null) return extra;
       throw new Error(`Unknown tool: ${name}`);
@@ -1189,7 +1205,7 @@ const SERVER_INSTRUCTIONS = `You are connected to Tripleseat for The Village, Bi
 
 Lead origin (standing rule): every lead must record where it came from (The Knot, WeddingWire, Zola, website form, phone, email/referral, walk-in, etc.). Set it with set_lead_source (or lead_source_ids on create_lead/update_lead) and add an "ORIGIN: ..." note describing the path the inquiry took. Use list_lead_sources for IDs; if a needed source is missing, ask the user to add it in Tripleseat (Settings > Preferences > Drop-downs > Lead Source).
 
-What still needs the Tripleseat web app: recording or editing payments, adding menu/rental line items, and creating new drop-down options. Notes (add_note) replace the old practice of typing notes in the browser; billing items such as discounts can be set with update_billing_amount.
+What still needs the Tripleseat web app: recording or editing payments, adding menu/rental line items, and creating new drop-down options. Discussions: Tripleseat's API has no discussions endpoint, so get_discussion_thread rebuilds a thread from the Tripleseat relay emails in events@, and send_discussion_message posts on the thread by replying from events@ to a relay email (dry_run first; send only after the user approves the exact text and attachments). Notes (add_note) replace the old practice of typing notes in the browser; billing items such as discounts can be set with update_billing_amount.
 
 Response size: search/list tools return summary fields only. Use get_event / get_lead / get_booking / get_contact for detail, and only for the records the user asks about.
 

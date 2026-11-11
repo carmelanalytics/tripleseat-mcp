@@ -31,7 +31,7 @@ async function token(): Promise<string> {
   return cached.token;
 }
 
-async function graph(path: string, init: RequestInit = {}): Promise<any> {
+export async function graph(path: string, init: RequestInit = {}): Promise<any> {
   const url = path.startsWith("http") ? path : `${GRAPH}${path}`;
   const r = await fetch(url, {
     ...init,
