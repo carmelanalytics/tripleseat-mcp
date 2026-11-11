@@ -12,6 +12,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncKbFromSheet = syncKbFromSheet;
+exports.parsePastedTable = parsePastedTable;
+exports.storeKbRows = storeKbRows;
 exports.loadKb = loadKb;
 exports.kbPromptBlock = kbPromptBlock;
 const node_crypto_1 = __importDefault(require("node:crypto"));
@@ -55,7 +57,51 @@ async function syncKbFromSheet() {
     const j = await r.json();
     if (!r.ok)
         throw new Error(`Sheets error: ${JSON.stringify(j).slice(0, 200)}`);
-    const [header, ...rows] = (j.values || []);
+    return storeKbRows((j.values || []));
+}
+/** Split text copied from a spreadsheet (tab-separated; cells with line breaks are quoted) into rows. */
+function parsePastedTable(text) {
+    const rows = [];
+    let row = [], cell = "", quoted = false;
+    const t = text.replace(/\r\n?/g, "\n");
+    for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (quoted) {
+            if (c === '"' && t[i + 1] === '"') {
+                cell += '"';
+                i++;
+            }
+            else if (c === '"')
+                quoted = false;
+            else
+                cell += c;
+        }
+        else if (c === '"' && cell === "")
+            quoted = true;
+        else if (c === "\t") {
+            row.push(cell);
+            cell = "";
+        }
+        else if (c === "\n") {
+            row.push(cell);
+            rows.push(row);
+            row = [];
+            cell = "";
+        }
+        else
+            cell += c;
+    }
+    if (cell !== "" || row.length) {
+        row.push(cell);
+        rows.push(row);
+    }
+    return rows.filter((r) => r.some((x) => x.trim()));
+}
+/** Replace the stored FAQ with these rows (first row is the header). */
+async function storeKbRows(values) {
+    const [header, ...rows] = values;
+    if (!header)
+        throw new Error("No rows found");
     const col = (name) => header.findIndex((h) => h.trim().toLowerCase() === name.toLowerCase());
     const iDept = col("Department"), iTopic = col("Topic"), iQ = col("Question"), iA = col("Answer"), iS = col("Status");
     if (iQ < 0 || iA < 0)

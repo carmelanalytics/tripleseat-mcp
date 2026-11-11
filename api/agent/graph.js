@@ -88,6 +88,11 @@ async function getMessage(mailbox, id) {
     return graph(`/users/${encodeURIComponent(mailbox)}/messages/${id}?$select=${SELECT}`);
 }
 /** Reply on the existing email thread (keeps the Tripleseat relay / marketplace thread intact). */
+/** Which mailbox actually sends, and the From address to show when it differs. */
+function via(fromAddress) {
+    const mailbox = config_js_1.agentConfig.sendVia || fromAddress;
+    return mailbox.toLowerCase() === fromAddress.toLowerCase() ? { mailbox } : { mailbox, from: { emailAddress: { address: fromAddress } } };
+}
 async function replyToMessage(mailbox, messageId, text, cc = []) {
     await graph(`/users/${encodeURIComponent(mailbox)}/messages/${messageId}/reply`, {
         method: "POST",
@@ -106,10 +111,12 @@ async function replyToMessage(mailbox, messageId, text, cc = []) {
 async function sendFrom(fromMailbox, to, subject, text, quotedFrom, quotedBody, cc = []) {
     const fresh = !quotedBody;
     const body = fresh ? text : `${text}\n\n----- Original message -----\nFrom: ${quotedFrom}\nSubject: ${subject}\n\n${quotedBody}`;
-    await graph(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
+    const v = via(fromMailbox);
+    await graph(`/users/${encodeURIComponent(v.mailbox)}/sendMail`, {
         method: "POST",
         body: JSON.stringify({
             message: {
+                ...(v.from ? { from: v.from } : {}),
                 subject: fresh || /^re:/i.test(subject) ? subject : `Re: ${subject}`,
                 body: { contentType: "Text", content: body },
                 toRecipients: [{ emailAddress: { address: to } }],
@@ -121,10 +128,12 @@ async function sendFrom(fromMailbox, to, subject, text, quotedFrom, quotedBody, 
 }
 /** Plain send (used for the digest and internal escalations only — never to guests). */
 async function sendInternal(fromMailbox, to, subject, html, cc = []) {
-    await graph(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
+    const v = via(fromMailbox);
+    const send = (withFrom) => graph(`/users/${encodeURIComponent(v.mailbox)}/sendMail`, {
         method: "POST",
         body: JSON.stringify({
             message: {
+                ...(withFrom && v.from ? { from: v.from } : {}),
                 subject,
                 body: { contentType: "HTML", content: html },
                 toRecipients: to.map((address) => ({ emailAddress: { address } })),
@@ -133,6 +142,15 @@ async function sendInternal(fromMailbox, to, subject, html, cc = []) {
             saveToSentItems: true,
         }),
     });
+    try {
+        await send(true);
+    }
+    catch (e) {
+        // Staff notices still have to arrive if the mailbox lacks Send As rights on the address.
+        if (!v.from)
+            throw e;
+        await send(false);
+    }
 }
 /** Tag a message in Outlook so staff can see what the agent did with it. */
 async function categorize(mailbox, messageId, category) {

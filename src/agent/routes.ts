@@ -12,7 +12,7 @@ import { agentConfig } from "./config.js";
 import { migrateAgent, getSetting, setSetting, AgentMessageRow } from "./store.js";
 import { runPoll } from "./pipeline.js";
 import { sendDigest } from "./digest.js";
-import { syncKbFromSheet } from "./kb.js";
+import { parsePastedTable, storeKbRows, syncKbFromSheet } from "./kb.js";
 import { DEFAULT_VOICE_GUIDE, neutralise } from "./voice.js";
 import { disclosureSettings, DEFAULT_LINE_EVENTS, DEFAULT_LINE_GENERAL } from "./disclosure.js";
 import { formSettings, originQuestionText } from "./onboarding.js";
@@ -351,7 +351,9 @@ ${rows
 </table>
 <h3>Add replies</h3>
 <p>Paste a JSON list. Each item needs reply_text; guest_name, inquiry_text, sent_utc, event_type, recipient_type, situation_tags and internetMessageId are optional. Guest names and dollar amounts are blanked in the copy the agent writes from, so an old guest's details do not reach a new reply.</p>
-<form method="post" action="/admin/agent/exemplars/import"><textarea name="json" rows="8"></textarea>
+<form method="post" action="/admin/agent/exemplars/import">
+<p>Choose the file: <input type="file" accept=".json,application/json" onchange="var f=this.files[0];if(f){var b=this.form.json;f.text().then(function(t){b.value=t;});}"> or paste its contents below.</p>
+<textarea name="json" rows="8"></textarea>
 <p><button class="btn" type="submit">Add</button></p></form>`;
   res.type("html").send(page("Your replies", body));
 });
@@ -434,6 +436,10 @@ agentAdminRouter.get("/settings", async (_req, res) => {
   const body = `
 <p>FAQ knowledge base: ${kb?.usable || 0} approved answers of ${kb?.total || 0} questions, last synced ${esc(kb?.synced || "never")}.
 <form method="post" action="/admin/agent/settings/sync" style="display:inline"><button class="btn">Sync FAQ sheet now</button></form></p>
+<form method="post" action="/admin/agent/settings/kb-paste">
+<p><b>Or paste the FAQ.</b> In the FAQ sheet, select columns A to G from the header row down, copy, and paste here. This replaces the stored FAQ and needs no Google set-up. Paste again whenever the sheet changes.</p>
+<textarea name="table" rows="4"></textarea>
+<p><button class="btn" type="submit">Load pasted FAQ</button></p></form>
 <form method="post" action="/admin/agent/settings">
 <h3>House rules</h3><p>Internal policy the agent follows (never quoted to guests). Keep unpublished pricing out. Seasonal or dated notes belong here too, for example a road closure or a week the restaurant is closed.</p>
 <textarea name="house_rules" rows="18">${esc(house)}</textarea>
@@ -485,6 +491,15 @@ agentAdminRouter.post("/settings", async (req, res) => {
   await setSetting("disclosure_line_events", text("disclosure_line_events") || DEFAULT_LINE_EVENTS);
   await setSetting("disclosure_line_general", text("disclosure_line_general") || DEFAULT_LINE_GENERAL);
   res.redirect("/admin/agent/settings");
+});
+
+agentAdminRouter.post("/settings/kb-paste", express.urlencoded({ extended: true, limit: "4mb" }), async (req, res) => {
+  try {
+    const out = await storeKbRows(parsePastedTable(String(req.body.table || "")));
+    res.type("html").send(page("FAQ loaded", `<p>Loaded ${out.rows} questions; ${out.usable} have approved answers the agent can use.</p><p><a href="/admin/agent/settings">Back to settings</a></p>`));
+  } catch (e: any) {
+    res.status(400).type("html").send(page("FAQ not loaded", `<p>${esc(e.message)}</p><p>The first row must be the header row, with Question and Answer columns.</p><p><a href="/admin/agent/settings">Back</a></p>`));
+  }
 });
 
 agentAdminRouter.post("/settings/sync", async (_req, res) => {

@@ -48,7 +48,33 @@ export async function syncKbFromSheet(): Promise<{ rows: number; usable: number 
   const r = await fetch(url, { headers: { Authorization: `Bearer ${await googleToken()}` } });
   const j: any = await r.json();
   if (!r.ok) throw new Error(`Sheets error: ${JSON.stringify(j).slice(0, 200)}`);
-  const [header, ...rows] = (j.values || []) as string[][];
+  return storeKbRows((j.values || []) as string[][]);
+}
+
+/** Split text copied from a spreadsheet (tab-separated; cells with line breaks are quoted) into rows. */
+export function parsePastedTable(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = "", quoted = false;
+  const t = text.replace(/\r\n?/g, "\n");
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (quoted) {
+      if (c === '"' && t[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"' && cell === "") quoted = true;
+    else if (c === "\t") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((x) => x.trim()));
+}
+
+/** Replace the stored FAQ with these rows (first row is the header). */
+export async function storeKbRows(values: string[][]): Promise<{ rows: number; usable: number }> {
+  const [header, ...rows] = values;
+  if (!header) throw new Error("No rows found");
   const col = (name: string) => header.findIndex((h) => h.trim().toLowerCase() === name.toLowerCase());
   const iDept = col("Department"), iTopic = col("Topic"), iQ = col("Question"), iA = col("Answer"), iS = col("Status");
   if (iQ < 0 || iA < 0) throw new Error("FAQ sheet must have Question and Answer columns");

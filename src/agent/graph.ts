@@ -106,6 +106,12 @@ export async function getMessage(mailbox: string, id: string): Promise<MailMessa
 }
 
 /** Reply on the existing email thread (keeps the Tripleseat relay / marketplace thread intact). */
+/** Which mailbox actually sends, and the From address to show when it differs. */
+function via(fromAddress: string): { mailbox: string; from?: { emailAddress: { address: string } } } {
+  const mailbox = agentConfig.sendVia || fromAddress;
+  return mailbox.toLowerCase() === fromAddress.toLowerCase() ? { mailbox } : { mailbox, from: { emailAddress: { address: fromAddress } } };
+}
+
 export async function replyToMessage(
   mailbox: string,
   messageId: string,
@@ -138,10 +144,12 @@ export async function sendFrom(
 ): Promise<void> {
   const fresh = !quotedBody;
   const body = fresh ? text : `${text}\n\n----- Original message -----\nFrom: ${quotedFrom}\nSubject: ${subject}\n\n${quotedBody}`;
-  await graph(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
+  const v = via(fromMailbox);
+  await graph(`/users/${encodeURIComponent(v.mailbox)}/sendMail`, {
     method: "POST",
     body: JSON.stringify({
       message: {
+        ...(v.from ? { from: v.from } : {}),
         subject: fresh || /^re:/i.test(subject) ? subject : `Re: ${subject}`,
         body: { contentType: "Text", content: body },
         toRecipients: [{ emailAddress: { address: to } }],
@@ -160,18 +168,28 @@ export async function sendInternal(
   html: string,
   cc: string[] = []
 ): Promise<void> {
-  await graph(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
-    method: "POST",
-    body: JSON.stringify({
-      message: {
-        subject,
-        body: { contentType: "HTML", content: html },
-        toRecipients: to.map((address) => ({ emailAddress: { address } })),
-        ccRecipients: cc.map((address) => ({ emailAddress: { address } })),
-      },
-      saveToSentItems: true,
-    }),
-  });
+  const v = via(fromMailbox);
+  const send = (withFrom: boolean) =>
+    graph(`/users/${encodeURIComponent(v.mailbox)}/sendMail`, {
+      method: "POST",
+      body: JSON.stringify({
+        message: {
+          ...(withFrom && v.from ? { from: v.from } : {}),
+          subject,
+          body: { contentType: "HTML", content: html },
+          toRecipients: to.map((address) => ({ emailAddress: { address } })),
+          ccRecipients: cc.map((address) => ({ emailAddress: { address } })),
+        },
+        saveToSentItems: true,
+      }),
+    });
+  try {
+    await send(true);
+  } catch (e) {
+    // Staff notices still have to arrive if the mailbox lacks Send As rights on the address.
+    if (!v.from) throw e;
+    await send(false);
+  }
 }
 
 /** Tag a message in Outlook so staff can see what the agent did with it. */

@@ -35,7 +35,11 @@ exports.agentConfig = {
     msClientId: env("MS_CLIENT_ID"),
     msClientSecret: env("MS_CLIENT_SECRET"),
     // Mailboxes the agent watches
-    mailboxes: list("AGENT_MAILBOXES", "events@thevillagebigsur.com,patrick@thevillagebigsur.com,info@thevillagebigsur.com"),
+    // The one real mailbox the agent reads and sends through. events@, info@, solstice@, bodega@ and
+    // yoga@ are groups or lists, not mailboxes, so mail is sent through this mailbox "as" those
+    // addresses (it needs Send As rights on each of them).
+    sendVia: env("AGENT_SEND_VIA", "patrick@thevillagebigsur.com"),
+    mailboxes: list("AGENT_MAILBOXES", env("AGENT_SEND_VIA", "patrick@thevillagebigsur.com")),
     // Who gets the reply copy, the digest and escalations
     ccOnEveryReply: env("AGENT_CC", "events@thevillagebigsur.com"),
     digestTo: list("AGENT_DIGEST_TO", "patrick@thevillagebigsur.com,events@thevillagebigsur.com"),
@@ -55,7 +59,7 @@ exports.agentConfig = {
     faqRange: env("AGENT_FAQ_RANGE", "FAQ!A1:G400"),
     googleServiceAccountJson: env("GOOGLE_SERVICE_ACCOUNT_JSON"),
     // Tripleseat
-    tripleseatLocationId: env("TRIPLESEAT_LOCATION_ID"),
+    tripleseatLocationId: env("TRIPLESEAT_LOCATION_ID", "24590"),
     // The events inquiry form (questionnaire) that event guests outside Tripleseat are invited to fill out
     inquiryFormLink: env("AGENT_INQUIRY_FORM_LINK", "https://thevillagebigsur.tripleseat.com/party_request/30602"),
     // After this many invitations with no form filled out, the conversation goes to a person

@@ -203,7 +203,7 @@ export async function followUpTask(
   rec: { leadId?: string; eventId?: string },
   body: string
 ): Promise<void> {
-  const siteId = Number(process.env.TRIPLESEAT_SITE_ID || 0);
+  const siteId = Number(process.env.TRIPLESEAT_SITE_ID || 12601);
   const taskTypeId = Number(process.env.TRIPLESEAT_TASK_TYPE_ID || 0);
   const assignees = (process.env.TRIPLESEAT_TASK_ASSIGNEE_IDS || "")
     .split(",")

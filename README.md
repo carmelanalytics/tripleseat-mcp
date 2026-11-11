@@ -164,7 +164,11 @@ Business facts are not stored in this repository: FAQ answers sync hourly from t
 
 - Tripleseat: site 12601, location 24590 (`TRIPLESEAT_LOCATION_ID`, `TRIPLESEAT_SITE_ID`).
 - Microsoft 365: an app registration with Mail.ReadWrite and Mail.Send (application), limited by an
-  Exchange application access policy to events@, info@, patrick@, solstice@, bodega@ and yoga@
-  (the last three are send-only for the agent).
+  Exchange application access policy to the one mailbox in `AGENT_SEND_VIA` (default patrick@).
+  events@, info@, solstice@, bodega@ and yoga@ are groups or lists, not mailboxes: the agent reads
+  the mail that reaches the service mailbox and sends through it with those addresses in From, so
+  that mailbox needs Send As rights on each of them.
+- The FAQ can be pasted on the settings page (columns A to G copied from the sheet) instead of
+  setting up the Google service account; the hourly sync then stays off.
 - `PUBLIC_BASE_URL` and `CRON_SECRET` (or `AGENT_LINK_SECRET`) are needed for the Yes / No links.
 - Set the Vercel project's Function Max Duration to 300 seconds. Start in `AGENT_MODE=shadow`.
