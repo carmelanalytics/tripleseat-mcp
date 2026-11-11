@@ -163,7 +163,7 @@ function matchesTarget(m: any, t: Target): boolean {
 export async function executeDiscussionTool(name: string, args: any): Promise<string | null> {
   switch (name) {
     case "get_discussion_thread": {
-      const mailbox = String(args.mailbox || agentConfig.sendAs);
+      const mailbox = String(args.mailbox || agentConfig.sendVia || agentConfig.sendAs); // events@ is a group, so read the service mailbox
       const limit = Math.min(Math.max(Number(args.max_messages) || 20, 1), 100);
       const t = await resolveTarget(args);
       const terms = [...t.emails, ...t.names, ...t.ids];
@@ -209,7 +209,7 @@ export async function executeDiscussionTool(name: string, args: any): Promise<st
     }
 
     case "send_discussion_message": {
-      const mailbox = String(args.mailbox || agentConfig.sendAs);
+      const mailbox = String(args.mailbox || agentConfig.sendVia || agentConfig.sendAs); // events@ is a group, so read the service mailbox
       const target = await graph(
         `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(String(args.message_id))}?$select=${SELECT}`
       );

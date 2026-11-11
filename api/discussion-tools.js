@@ -158,7 +158,7 @@ function matchesTarget(m, t) {
 async function executeDiscussionTool(name, args) {
     switch (name) {
         case "get_discussion_thread": {
-            const mailbox = String(args.mailbox || config_js_1.agentConfig.sendAs);
+            const mailbox = String(args.mailbox || config_js_1.agentConfig.sendVia || config_js_1.agentConfig.sendAs); // events@ is a group, so read the service mailbox
             const limit = Math.min(Math.max(Number(args.max_messages) || 20, 1), 100);
             const t = await resolveTarget(args);
             const terms = [...t.emails, ...t.names, ...t.ids];
@@ -199,7 +199,7 @@ async function executeDiscussionTool(name, args) {
             }, null, 2);
         }
         case "send_discussion_message": {
-            const mailbox = String(args.mailbox || config_js_1.agentConfig.sendAs);
+            const mailbox = String(args.mailbox || config_js_1.agentConfig.sendVia || config_js_1.agentConfig.sendAs); // events@ is a group, so read the service mailbox
             const target = await (0, graph_js_1.graph)(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(String(args.message_id))}?$select=${SELECT}`);
             const fromAddr = addr(target?.from);
             if (!isTripleseat(fromAddr)) {
