@@ -436,11 +436,10 @@ up to <input name="reply_max_words_short" size="4" value="${esc(maxShort)}"> for
 <p>The first reply to an event prospect, on a Tripleseat thread or by email, closes with this question unless the source is already known (a Knot, WeddingWire or Zola inquiry, a source already on the Tripleseat lead, or the guest said so). It replaces the usual closing question in that reply. When the guest answers, the answer is written on their Tripleseat lead and the Lead Source is set. Leave blank to switch it off.</p>
 <p><textarea name="origin_question_text" rows="2">${esc(originText)}</textarea></p>
 <h3>AI disclosure</h3>
-<p>Added to every reply by the system, so the wording cannot drift. The sentence goes in the first reply to a guest; the footer goes on every reply.</p>
+<p>One sentence, added by the system to the first reply to each guest so the wording cannot drift. Later replies carry no added wording.</p>
 <p>Disclosure: ${onOff("disclosure_mode", d.on ? "on" : "off")}</p>
 <p>First-reply sentence, event inquiries:<br><textarea name="disclosure_line_events" rows="3">${esc(d.lineEvents)}</textarea></p>
 <p>First-reply sentence, other inquiries:<br><textarea name="disclosure_line_general" rows="3">${esc(d.lineGeneral)}</textarea></p>
-<p>Footer on every reply:<br><textarea name="disclosure_footer" rows="3">${esc(d.footer)}</textarea></p>
 <h3>Voice guide</h3><p>Leave blank to use the built-in guide (shown below as a starting point).</p>
 <textarea name="voice_guide" rows="18" placeholder="${esc(voice_js_1.DEFAULT_VOICE_GUIDE)}">${esc(voice)}</textarea>
 <p><button class="btn" type="submit">Save</button></p></form>`;
@@ -466,7 +465,6 @@ exports.agentAdminRouter.post("/settings", async (req, res) => {
     // A blank box restores the built-in wording rather than sending replies with no disclosure text.
     await (0, store_js_1.setSetting)("disclosure_line_events", text("disclosure_line_events") || disclosure_js_1.DEFAULT_LINE_EVENTS);
     await (0, store_js_1.setSetting)("disclosure_line_general", text("disclosure_line_general") || disclosure_js_1.DEFAULT_LINE_GENERAL);
-    await (0, store_js_1.setSetting)("disclosure_footer", text("disclosure_footer") || disclosure_js_1.DEFAULT_FOOTER);
     res.redirect("/admin/agent/settings");
 });
 exports.agentAdminRouter.post("/settings/sync", async (_req, res) => {

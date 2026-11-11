@@ -46,7 +46,7 @@ exports.CHECKS = [
     { id: "packet_on_request", label: "Event Info Packet mentioned only when the guest asked for it", kind: "code", defaultMode: "gate" },
     { id: "length", label: "Length fits the number of questions asked", kind: "code", defaultMode: "gate" },
     { id: "plain_text", label: "Plain text with sign-off: no lists, bold, headings or emoji; one exclamation mark at most", kind: "code", defaultMode: "gate" },
-    { id: "disclosure", label: "Authorship disclosed: first-reply sentence and footer present, nothing claims a person read it first", kind: "code", defaultMode: "gate" },
+    { id: "disclosure", label: "Authorship disclosed in the first reply; nothing claims a person read it first", kind: "code", defaultMode: "gate" },
     { id: "no_repeat_sentence", label: "No sentence copied from a recent reply to a different guest", kind: "code", defaultMode: "report" },
     // ── decided by the review model ──
     {

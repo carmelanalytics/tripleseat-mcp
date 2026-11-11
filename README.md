@@ -138,8 +138,8 @@ The Knot / WeddingWire, Zola, and direct mail to events@ / info@ / patrick@) in 
   in code, replaces the date question in that reply, and is editable in settings. When the guest
   answers, the agent writes "ORIGIN: ..." on the Tripleseat lead and sets the Lead Source.
 - The Event Info Packet is mentioned only when the guest asks for it. Otherwise the events team sends it.
-- AI disclosure: one sentence in the first reply and a footer on every reply, both added in code and
-  editable in settings (California Business and Professions Code 17940 to 17943).
+- AI disclosure: one sentence in the first reply to each guest, added in code and editable in
+  settings (California Business and Professions Code 17940 to 17943). There is no footer.
 
 ### Visibility and scoring
 
