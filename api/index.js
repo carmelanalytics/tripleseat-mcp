@@ -47,6 +47,15 @@ async function ensureMigrated() {
             const result = await (0, users_js_1.seedAdminUser)(adminRole[0].id);
             if (result.created)
                 console.log("[Init] Seeded admin user:", result.email);
+            // One-time admin password reset: set ADMIN_RESET_PASSWORD in Vercel, redeploy, sign in, then delete the variable.
+            const resetTo = process.env.ADMIN_RESET_PASSWORD;
+            if (resetTo) {
+                const admin = await dbQuery(`SELECT id, email FROM mcp_users WHERE is_admin = true ORDER BY created_at LIMIT 1`);
+                if (admin.length > 0) {
+                    await (0, users_js_1.resetPassword)(admin[0].id, resetTo);
+                    console.log("[Init] Admin password reset from ADMIN_RESET_PASSWORD for:", admin[0].email);
+                }
+            }
         }
     }
     catch (err) {

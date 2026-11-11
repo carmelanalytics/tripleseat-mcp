@@ -24,7 +24,7 @@ import { agentCronRouter, agentAdminRouter, agentAnswerRouter } from "./agent/ro
 import { logToolCall } from "./usage.js";
 import { migrate } from "./db.js";
 import { seedDefaultRoles } from "./roles.js";
-import { seedAdminUser, changePassword } from "./users.js";
+import { seedAdminUser, changePassword, resetPassword } from "./users.js";
 import { authenticateUser } from "./users.js";
 import {
   getMetadata,
@@ -61,6 +61,18 @@ async function ensureMigrated(): Promise<void> {
     if (adminRole.length > 0) {
       const result = await seedAdminUser(adminRole[0].id);
       if (result.created) console.log("[Init] Seeded admin user:", result.email);
+
+      // One-time admin password reset: set ADMIN_RESET_PASSWORD in Vercel, redeploy, sign in, then delete the variable.
+      const resetTo = process.env.ADMIN_RESET_PASSWORD;
+      if (resetTo) {
+        const admin = await dbQuery<{ id: string; email: string }>(
+          `SELECT id, email FROM mcp_users WHERE is_admin = true ORDER BY created_at LIMIT 1`
+        );
+        if (admin.length > 0) {
+          await resetPassword(admin[0].id, resetTo);
+          console.log("[Init] Admin password reset from ADMIN_RESET_PASSWORD for:", admin[0].email);
+        }
+      }
     }
   } catch (err: any) {
     console.error("[Init] Migration error:", err.message);
