@@ -125,7 +125,13 @@ export async function loadKb(): Promise<KbRow[]> {
  * House rule (Patrick, 2026-11-15): overnight stays are never answered by the agent or from the FAQ.
  * Lodging rows are kept out of the prompt entirely, approved or not.
  */
+/** The one lodging answer Patrick approved for use (2026-11-15): the FAQ's "Do you have on-site lodging?" row. */
+export function isApprovedLodgingAnswer(r: Pick<KbRow, "question">): boolean {
+  return /^do you have on-?site lodging\??$/i.test(r.question.trim());
+}
+
 export function isOvernightRow(r: Pick<KbRow, "topic" | "question" | "answer">): boolean {
+  if (isApprovedLodgingAnswer(r)) return false;
   return /lodging|accommodat/i.test(r.topic) ||
     /\b(overnight|lodging|accommodat\w*|room blocks?|apartments?|check in|check-in|check out|check-out|stay at|where can our guests stay)\b/i.test(r.question);
 }

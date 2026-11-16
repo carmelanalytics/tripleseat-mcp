@@ -5,7 +5,7 @@
 import { agentConfig } from "./config.js";
 import { fetchNewMessages, getMessage, replyToMessage, sendFrom, sendInternal, categorize, MailMessage } from "./graph.js";
 import { classifyIntake, Intake } from "./intake.js";
-import { loadKb, kbPromptBlock } from "./kb.js";
+import { loadKb, kbPromptBlock, isApprovedLodgingAnswer } from "./kb.js";
 import { voiceGuide, activeCorrections } from "./voice.js";
 import { callJson } from "./llm.js";
 import { findGuest, dateFacts, longDate, createLead, followUpTask, originNote, tagOrigin, idsFromTripleseatEmail, guestFromIds, GuestRecord, DateFacts } from "./ts-context.js";
@@ -428,7 +428,9 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
     // House rule (Patrick, 2026-11-15): questions about overnight stays are never answered by the agent
     // or from the FAQ. Checked in code as well as in triage so a missed tag cannot slip through.
     if (asksAboutOvernightStay(t, intake.text)) {
-      return escalate(rowId, intake, OVERNIGHT_HANDOFF_REASON, undefined, handoffBrief);
+      // The person who answers gets Patrick's approved lodging line from the FAQ as a starting point.
+      const approvedLine = (await loadKb()).find((r) => r.usable && isApprovedLodgingAnswer(r))?.answer;
+      return escalate(rowId, intake, OVERNIGHT_HANDOFF_REASON, approvedLine, handoffBrief);
     }
     if (t.escalate) return escalate(rowId, intake, t.escalate_reason, undefined, handoffBrief);
 
