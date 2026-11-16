@@ -72,9 +72,23 @@ Set escalate=true (a person must handle it; the agent sends nothing to the guest
 - asks for a custom price, discount, or a deal beyond published packages;
 - is emotional or sensitive (illness, death in the family, a breakup);
 - shows the guest is angry or frustrated with us, whatever the subject;
-- is mainly a personal note that a person should answer: thanks after an event, congratulations, condolences.
+- is mainly a personal note that a person should answer: thanks after an event, congratulations, condolences;
+- asks about staying overnight in any way: the apartments, the A-Frame, Idlewild stays, rooms, lodging, accommodations, room blocks, check-in or check-out, sleeping on site, or where guests can stay nearby. House rule: a person always answers these, never the agent.
 Ordinary questions from booked couples (timeline, vendors, menu, guest logistics) are NOT escalations.
 `;
+
+export const OVERNIGHT_HANDOFF_REASON =
+  "Overnight stay question. House rule: a person answers every question about lodging or staying overnight; the agent sends nothing.";
+
+const OVERNIGHT_RE =
+  /\b(overnight|over night|stay(ing|s)? (the night|over|on site|onsite|there|at (the )?(village|property|a-?frame|idlewild|apartment))|spend the night|sleep(ing|s)? (on site|onsite|over|there)|lodging|accommodat\w*|room blocks?|block of rooms|hotel rooms?|places? to stay|where (can|could|should|do|would) (we|our guests|guests|people|they|i) stay|apartments?|bed ?rooms?|airbnb|vrbo|nightly rate|check-?in time|check-?out time)\b/i;
+
+/** True when the guest is asking about staying overnight (tagged by triage or matched in the text). */
+export function asksAboutOvernightStay(t: Pick<Triage, "situation_tags" | "questions" | "topics">, text: string): boolean {
+  if ((t.situation_tags || []).includes("lodging")) return true;
+  if ((t.topics || []).some((x) => /lodging|accommodation|overnight/i.test(x))) return true;
+  return OVERNIGHT_RE.test([...(t.questions || []), text || ""].join("\n"));
+}
 
 async function triage(intake: Intake, guest: GuestRecord): Promise<Triage> {
   return callJson<Triage>({
@@ -411,6 +425,11 @@ async function handle(rowId: number, mailbox: string, m: MailMessage, sendsLeft:
       (t.requested_dates.length ? `Dates asked about: ${t.requested_dates.join(", ")}\n` : "") +
       (t.guest_count ? `Guests: ${t.guest_count}\n` : "") +
       `What they asked:\n${t.questions.map((q, i) => `${i + 1}. ${q}`).join("\n") || "(no specific question)"}`;
+    // House rule (Patrick, 2026-11-15): questions about overnight stays are never answered by the agent
+    // or from the FAQ. Checked in code as well as in triage so a missed tag cannot slip through.
+    if (asksAboutOvernightStay(t, intake.text)) {
+      return escalate(rowId, intake, OVERNIGHT_HANDOFF_REASON, undefined, handoffBrief);
+    }
     if (t.escalate) return escalate(rowId, intake, t.escalate_reason, undefined, handoffBrief);
 
     // A direct email thread that a person at The Village has already answered stays with that person.
